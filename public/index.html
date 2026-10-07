@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Voyagr — Premium Itinerary Planner</title>
+  <meta name="description" content="Plan premium trips: sightseeing, restaurants, stays, transport and cab & auto fare comparison across apps." />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,500;0,700;1,500&display=swap" />
+  <link rel="stylesheet" href="/css/styles.css" />
+  <script type="module" src="/js/app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="topbar">
+    <a class="brand" href="#/" aria-label="Voyagr home">
+      <span class="brand-mark" aria-hidden="true">V</span>
+      <span class="brand-name">Voyagr</span>
+    </a>
+    <nav class="nav" aria-label="Main">
+      <a href="#/" data-nav="home">Plan a trip</a>
+      <a href="#/trips" data-nav="trips" class="auth-only" hidden>My trips</a>
+      <a href="#/admin" data-nav="admin" class="admin-only" hidden>Admin</a>
+    </nav>
+    <div class="account">
+      <button type="button" class="btn btn-ghost guest-only" id="btn-signin">Sign in</button>
+      <button type="button" class="btn btn-gold guest-only" id="btn-signup">Join Voyagr</button>
+      <span class="user-chip auth-only" hidden><span class="avatar" id="user-initial" aria-hidden="true"></span><span id="user-name"></span></span>
+      <button type="button" class="btn btn-ghost auth-only" id="btn-signout" hidden>Sign out</button>
+    </div>
+  </header>
+
+  <main id="main">
+    <!-- ================= HOME ================= -->
+    <section class="view" data-view="home">
+      <div class="hero">
+        <div class="hero-glow" aria-hidden="true"></div>
+        <p class="eyebrow">Curated journeys · Smart routing · Fair fares</p>
+        <h1 class="display">Travel, <em>beautifully</em> planned.</h1>
+        <p class="lead">Pick a destination and the number of days. We craft a day-by-day itinerary with must-see sights, the best tables in town, handpicked stays, every way to get around — and compare cab &amp; auto fares across apps.</p>
+
+        <form class="planner glass" id="plan-form" novalidate autocomplete="off">
+          <div class="field field-dest">
+            <label for="f-destination">Destination</label>
+            <input id="f-destination" name="destination" list="dest-list" required maxlength="60" placeholder="e.g. Jaipur" />
+            <datalist id="dest-list"></datalist>
+          </div>
+          <div class="field">
+            <label for="f-days">Days</label>
+            <div class="stepper">
+              <button type="button" data-step="-1" aria-label="Fewer days">−</button>
+              <input id="f-days" name="days" type="number" min="1" max="14" value="3" inputmode="numeric" />
+              <button type="button" data-step="1" aria-label="More days">+</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="f-travelers">Travellers</label>
+            <select id="f-travelers" name="travelers"></select>
+          </div>
+          <fieldset class="field segmented">
+            <legend>Style</legend>
+            <label><input type="radio" name="budget" value="budget" /><span>Affordable</span></label>
+            <label><input type="radio" name="budget" value="comfort" checked /><span>Comfort</span></label>
+            <label><input type="radio" name="budget" value="premium" /><span>Premium</span></label>
+          </fieldset>
+          <button class="btn btn-gold btn-lg" type="submit" id="plan-submit">Craft my itinerary</button>
+        </form>
+      </div>
+
+      <div class="section">
+        <div class="section-head">
+          <h2 class="title">Featured destinations</h2>
+          <p class="muted">Hand-curated guides with sights, food, stays and local transport.</p>
+        </div>
+        <div class="dest-grid" id="dest-grid"></div>
+      </div>
+
+      <div class="section features">
+        <div class="feature glass"><span class="ficon" aria-hidden="true">✦</span><h3>Day-by-day plans</h3><p>Sights clustered by neighbourhood so you spend time exploring, not commuting.</p></div>
+        <div class="feature glass"><span class="ficon" aria-hidden="true">⇄</span><h3>Fare comparison</h3><p>Uber, Ola, Rapido, inDrive &amp; metered autos side by side — cheapest highlighted.</p></div>
+        <div class="feature glass"><span class="ficon" aria-hidden="true">◈</span><h3>Stays for every style</h3><p>From smart hostels to palace hotels, with indicative nightly prices.</p></div>
+        <div class="feature glass"><span class="ficon" aria-hidden="true">⛨</span><h3>Private by design</h3><p>Encrypted sessions, hashed passwords and zero third-party trackers.</p></div>
+      </div>
+    </section>
+
+    <!-- ================= RESULTS ================= -->
+    <section class="view" data-view="plan" hidden>
+      <div class="result-hero glass">
+        <div>
+          <p class="eyebrow" id="r-region"></p>
+          <h1 class="display" id="r-title"></h1>
+          <p class="lead" id="r-tagline"></p>
+          <div class="chips" id="r-chips"></div>
+        </div>
+        <div class="result-actions">
+          <button type="button" class="btn btn-ghost" id="btn-back">← New search</button>
+          <button type="button" class="btn btn-gold" id="btn-save">Save trip</button>
+        </div>
+      </div>
+
+      <div class="estimate" id="r-estimate"></div>
+
+      <div class="tabs" role="tablist" aria-label="Trip details">
+        <button role="tab" type="button" data-tab="itinerary" aria-selected="true">Itinerary</button>
+        <button role="tab" type="button" data-tab="sights" aria-selected="false">Sightseeing</button>
+        <button role="tab" type="button" data-tab="food" aria-selected="false">Restaurants</button>
+        <button role="tab" type="button" data-tab="stays" aria-selected="false">Stays</button>
+        <button role="tab" type="button" data-tab="transport" aria-selected="false">Transport</button>
+        <button role="tab" type="button" data-tab="rides" aria-selected="false">Cab &amp; auto compare</button>
+      </div>
+
+      <div class="tab-panel" data-panel="itinerary" role="tabpanel"></div>
+      <div class="tab-panel" data-panel="sights" role="tabpanel" hidden></div>
+      <div class="tab-panel" data-panel="food" role="tabpanel" hidden></div>
+      <div class="tab-panel" data-panel="stays" role="tabpanel" hidden></div>
+      <div class="tab-panel" data-panel="transport" role="tabpanel" hidden></div>
+      <div class="tab-panel" data-panel="rides" role="tabpanel" hidden>
+        <div class="ride-controls glass">
+          <div class="field">
+            <label for="ride-from">From</label>
+            <select id="ride-from"></select>
+          </div>
+          <div class="field">
+            <label for="ride-to">To</label>
+            <select id="ride-to"></select>
+          </div>
+          <div class="field">
+            <label for="ride-km">or distance (km)</label>
+            <input id="ride-km" type="number" min="0.5" max="300" step="0.5" value="10" />
+          </div>
+          <button type="button" class="btn btn-gold" id="ride-go">Compare fares</button>
+        </div>
+        <div id="ride-results"></div>
+      </div>
+
+      <p class="disclaimer" id="r-disclaimer"></p>
+    </section>
+
+    <!-- ================= MY TRIPS ================= -->
+    <section class="view" data-view="trips" hidden>
+      <div class="section-head">
+        <h1 class="title">My trips</h1>
+        <p class="muted">Your saved itineraries — only you can see them.</p>
+      </div>
+      <div class="trip-list" id="trip-list"></div>
+    </section>
+
+    <!-- ================= ADMIN ================= -->
+    <section class="view" data-view="admin" hidden>
+      <div class="section-head">
+        <h1 class="title">Admin console</h1>
+        <p class="muted">Restricted area. Every request is verified server-side.</p>
+      </div>
+      <div class="stat-grid" id="admin-stats"></div>
+      <h2 class="subtitle">Users</h2>
+      <div class="table-wrap"><table class="table" id="admin-users"></table></div>
+      <h2 class="subtitle">Recent security events</h2>
+      <div class="table-wrap"><table class="table" id="admin-audit"></table></div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span>© <span id="year"></span> Voyagr</span>
+    <span class="muted">Fares &amp; prices are indicative estimates — verify before booking.</span>
+  </footer>
+
+  <!-- ================= AUTH DIALOG ================= -->
+  <dialog class="modal glass" id="auth-dialog" aria-labelledby="auth-title">
+    <form method="dialog" class="modal-close-form"><button class="icon-btn" aria-label="Close">×</button></form>
+    <h2 class="title" id="auth-title">Welcome back</h2>
+    <div class="segmented auth-switch" role="tablist">
+      <label><input type="radio" name="auth-mode" value="login" checked /><span>Sign in</span></label>
+      <label><input type="radio" name="auth-mode" value="register" /><span>Create account</span></label>
+    </div>
+    <form id="auth-form" novalidate>
+      <div class="field" id="name-field" hidden>
+        <label for="a-name">Full name</label>
+        <input id="a-name" name="name" maxlength="60" autocomplete="name" />
+      </div>
+      <div class="field">
+        <label for="a-email">Email</label>
+        <input id="a-email" name="email" type="email" maxlength="254" autocomplete="email" required />
+      </div>
+      <div class="field">
+        <label for="a-password">Password</label>
+        <input id="a-password" name="password" type="password" maxlength="128" autocomplete="current-password" required />
+        <small class="muted" id="pw-hint" hidden>At least 10 characters with letters and numbers.</small>
+      </div>
+      <p class="form-error" id="auth-error" role="alert"></p>
+      <button class="btn btn-gold btn-block" type="submit" id="auth-submit">Sign in</button>
+    </form>
+  </dialog>
+
+  <!-- ================= SAVE DIALOG ================= -->
+  <dialog class="modal glass" id="save-dialog" aria-labelledby="save-title">
+    <form method="dialog" class="modal-close-form"><button class="icon-btn" aria-label="Close">×</button></form>
+    <h2 class="title" id="save-title">Save this trip</h2>
+    <form id="save-form" novalidate>
+      <div class="field">
+        <label for="s-title">Trip name</label>
+        <input id="s-title" name="title" maxlength="80" required />
+      </div>
+      <p class="form-error" id="save-error" role="alert"></p>
+      <button class="btn btn-gold btn-block" type="submit">Save</button>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>
