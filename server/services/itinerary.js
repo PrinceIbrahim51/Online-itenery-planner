@@ -198,7 +198,7 @@ function generateItinerary(dest, { days, travelers, budget }) {
         ? 'Places come live from OpenStreetMap; stay prices are typical ranges for this city, and fares are estimates. Verify before booking.'
         : 'Prices, timings and fares are indicative and change often — please verify before booking.',
     attribution:
-      dest.source === 'live' ? 'Place data © OpenStreetMap contributors (ODbL) · City data GeoNames (CC BY 4.0)' : null,
+      dest.source === 'live' ? 'Place data © OpenStreetMap contributors (ODbL) and Wikipedia (CC BY-SA) · City data GeoNames (CC BY 4.0)' : null,
   };
 }
 

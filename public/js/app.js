@@ -201,21 +201,43 @@ function initPlanner() {
 // ---------------------------------------------------------------------------
 // Plan results
 // ---------------------------------------------------------------------------
-async function loadPlan(params) {
-  showView('plan');
-  const panel = $('[data-panel="itinerary"]');
-  selectTab('itinerary');
-  const featured = state.destinations.some((d) => d.slug === params.get('destination'));
-  loading(panel, featured ? 'Crafting your itinerary…' : 'Gathering live sights, food and stays from OpenStreetMap…');
+let planSeq = 0;
+
+/** Wipes every trace of the previous plan so nothing stale shows while loading. */
+function resetPlanView(loadingText) {
+  state.plan = null;
+  for (const id of ['#r-region', '#r-tagline', '#r-disclaimer']) $(id).textContent = '';
+  $('#r-title').textContent = 'Planning your trip…';
+  clear($('#r-chips'));
   clear($('#r-estimate'));
-  $('#r-title').textContent = '';
+  $('#r-banner').hidden = true;
+  $('#btn-save').hidden = true;
+  for (const name of ['sights', 'food', 'stays', 'transport']) clear($(`[data-panel="${name}"]`));
+  clear($('#ride-results'));
+  clear($('#ride-from'));
+  clear($('#ride-to'));
+  selectTab('itinerary');
+  loading($('[data-panel="itinerary"]'), loadingText);
+}
+
+async function loadPlan(params) {
+  const mine = ++planSeq;
+  showView('plan');
+  const featured = state.destinations.some((d) => d.slug === params.get('destination'));
+  resetPlanView(featured ? 'Crafting your itinerary…' : 'Gathering live sights, food and stays…');
+  let plan;
   try {
-    state.plan = await api(`/plan?${params}`);
+    plan = await api(`/plan?${params}`);
   } catch (err) {
-    clear(panel).append(h('div', { class: 'empty glass' }, err.message));
+    if (mine !== planSeq) return; // a newer search has started
+    $('#r-title').textContent = 'Couldn’t plan this trip';
+    clear($('[data-panel="itinerary"]')).append(h('div', { class: 'empty glass' }, err.message));
     return;
   }
-  renderPlan(state.plan);
+  if (mine !== planSeq) return; // ignore responses for an older search
+  state.plan = plan;
+  $('#btn-save').hidden = !state.accountsEnabled;
+  renderPlan(plan);
 }
 
 const SLOT_LABEL = { morning: 'Morning', afternoon: 'Afternoon', evening: 'Evening', any: 'Anytime' };
@@ -234,12 +256,21 @@ function renderPlan(p) {
   );
   $('#r-disclaimer').textContent = p.attribution ? `${p.disclaimer} ${p.attribution}.` : p.disclaimer;
   const banner = $('#r-banner');
-  banner.hidden = !d.degraded;
-  if (d.degraded) {
+  const status = d.liveStatus || 'ok';
+  banner.hidden = status === 'ok';
+  const reason = d.liveIssue ? ` (${d.liveIssue.replace('_', ' ')})` : '';
+  if (status === 'unavailable') {
     clear(banner).append(
-      'Live places couldn’t be loaded right now, so this plan shows transport, fares and costs only. ',
+      `Live places couldn’t be loaded right now${reason}, so this plan shows transport, fares and costs only. `,
       h('a', { href: p.searchLinks.sights }, 'Browse sights on Google Maps ↗'),
       ' or try again in a minute.'
+    );
+  } else if (status === 'partial') {
+    const missing = (d.failedParts || []).map((x) => ({ sights: 'some sights', food: 'restaurants & hotels', hubs: 'station details' })[x]).filter(Boolean);
+    clear(banner).append(
+      `Some live data didn’t load${missing.length ? ` (${missing.join(', ')})` : ''}${reason} — showing everything we could get. `,
+      d.failedParts?.includes('food') ? h('a', { href: p.searchLinks.restaurants }, 'Restaurants on Google Maps ↗') : null,
+      ' Refresh in a minute for the full plan.'
     );
   }
 

@@ -23,6 +23,7 @@ const { tripsRouter } = require('./routes/trips');
 const { adminRouter } = require('./routes/admin');
 const { createOpenTripMap } = require('./services/opentripmap');
 const { createOverpass } = require('./services/overpass');
+const { createWikipedia } = require('./services/wikipedia');
 
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 
@@ -35,7 +36,7 @@ function createLogger(config) {
   };
 }
 
-function createApp(config, { db, openTripMap, overpass } = {}) {
+function createApp(config, { db, openTripMap, overpass, wikipedia } = {}) {
   const logger = createLogger(config);
   // Accounts need persistent storage; without it (e.g. Vercel with no DATABASE_URL) the
   // planner still works and every account route answers 503.
@@ -43,6 +44,7 @@ function createApp(config, { db, openTripMap, overpass } = {}) {
   const sessions = database ? createSessionStore(database, config.sessionTtlMs) : null;
   const otm = openTripMap ?? (config.openTripMapKey ? createOpenTripMap(config.openTripMapKey) : null);
   const places = overpass === undefined ? createOverpass({ logger }) : overpass;
+  const wiki = wikipedia === undefined ? createWikipedia({ logger }) : wikipedia;
 
   const audit = async (req, action, detail = null, userId = req.user?.id ?? null) => {
     if (!database) return;
@@ -148,7 +150,7 @@ function createApp(config, { db, openTripMap, overpass } = {}) {
   app.use('/api', loadSession(sessions), requireJson, csrfProtection);
   app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
   app.use('/api/auth', authRouter({ db: database, sessions, config, audit, authLimiter }));
-  app.use('/api', planRouter({ openTripMap: otm, overpass: places, logger, planLimiter }));
+  app.use('/api', planRouter({ openTripMap: otm, overpass: places, wikipedia: wiki, logger, planLimiter }));
   app.use('/api/trips', tripsRouter({ db: database, audit }));
   app.use('/api/admin', adminRouter({ db: database, sessions, audit }));
   app.use('/api', notFound);

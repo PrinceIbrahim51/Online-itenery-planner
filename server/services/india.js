@@ -148,7 +148,7 @@ function toDestination(city, places, curatedSlugs = new Set()) {
 
   const attractions = places.sights
     .map((p) => {
-      const category = sightCategory(p.tags);
+      const category = p.wikiCategory || sightCategory(p.tags);
       const distance = haversineKm(center, p);
       const rank = (p.notable ? 3 : 0) + (p.tags.tourism === 'attraction' ? 1 : 0) + (p.hours ? 0.5 : 0) - distance / 15;
       return {
@@ -281,7 +281,7 @@ function toDestination(city, places, curatedSlugs = new Set()) {
 
 /** Radius (metres) to search for places, scaled to the size of the city. */
 function searchRadius(city) {
-  return { metro: 14000, large: 9000, mid: 6000, small: 4500 }[tierOf(city.pop)];
+  return { metro: 9000, large: 7000, mid: 5000, small: 4000 }[tierOf(city.pop)];
 }
 
 module.exports = { searchCities, getCity, toDestination, searchRadius, tierOf, totalCities: cities.length };

@@ -4,7 +4,8 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const cities = require('../server/data/india-cities.json');
 const india = require('../server/services/india');
-const { createOverpass, buildQuery, normalise } = require('../server/services/overpass');
+const { createOverpass, buildQueries, normalise, issueCode } = require('../server/services/overpass');
+const { createWikipedia } = require('../server/services/wikipedia');
 const { generateItinerary } = require('../server/services/itinerary');
 const { loadConfig } = require('../server/config');
 const { startServer, client } = require('./helpers');
@@ -48,11 +49,23 @@ test('city search: prefixes, aliases, accents and tourist favourites', () => {
   assert.ok(india.searchCities('a').length <= 12);
 });
 
-test('Overpass query is built only from numbers', () => {
-  const q = buildQuery(34.16, 77.58, 6000);
-  assert.match(q, /around:6000,34\.16000,77\.58000/);
-  assert.throws(() => buildQuery('34];out;', 77, 1000));
-  assert.throws(() => buildQuery(NaN, 77, 1000));
+test('Overpass queries are built only from numbers and stay small for big cities', () => {
+  const q = buildQueries(34.16, 77.58, 6000);
+  assert.match(q.sights, /around:6000,34\.16000,77\.58000/);
+  assert.match(q.food, /around:2400,/, 'restaurants searched close to the centre');
+  for (const part of Object.values(buildQueries(13.08, 80.27, 9000))) {
+    const radii = [...part.matchAll(/around:(\d+)/g)].map((m) => Number(m[1]));
+    assert.ok(Math.max(...radii) <= 25000, 'no huge-radius scans');
+    assert.match(part, /out tags/);
+  }
+  assert.throws(() => buildQueries('34];out;', 77, 1000));
+  assert.throws(() => buildQueries(NaN, 77, 1000));
+});
+
+test('failure codes are coarse and safe to show', () => {
+  assert.equal(issueCode(Object.assign(new Error('x'), { name: 'TimeoutError' })), 'timeout');
+  assert.equal(issueCode(new Error('Overpass 429')), 'http_429');
+  assert.equal(issueCode(new Error('fetch failed')), 'network');
 });
 
 test('Overpass results are validated, sanitised and de-duplicated', () => {
@@ -79,9 +92,52 @@ test('Overpass client falls back to a mirror and caches results', async () => {
   const op = createOverpass({ fetchImpl, endpoints: ['https://first.example/api', 'https://second.example/api'] });
   const a = await op.placesAround('x', 1, 2, 1000);
   const b = await op.placesAround('x', 1, 2, 1000);
+  assert.equal(a.sights.length, 1, 'de-duplicated across the parallel queries');
   assert.equal(a.sights[0].name, 'Museum');
-  assert.equal(a, b);
-  assert.equal(calls, 2);
+  assert.deepEqual(a.failed, []);
+  assert.equal(a, b, 'complete results are cached');
+  assert.equal(calls, 5, '3 parts, 2 of which hit the dead endpoint first');
+});
+
+test('one slow part does not wipe out the others; partial results are not cached', async () => {
+  let calls = 0;
+  const fetchImpl = async (_url, opts) => {
+    calls++;
+    if (decodeURIComponent(opts.body).includes('restaurant')) throw Object.assign(new Error('slow'), { name: 'TimeoutError' });
+    return { ok: true, text: async () => JSON.stringify({ elements: [{ type: 'node', id: 1, lat: 1, lon: 2, tags: { name: 'Fort', historic: 'fort' } }] }) };
+  };
+  const op = createOverpass({ fetchImpl, endpoints: ['https://a.example/api', 'https://b.example/api'] });
+  const r = await op.placesAround('y', 1, 2, 1000);
+  assert.equal(r.sights.length, 1);
+  assert.deepEqual(r.failed, ['food']);
+  assert.equal(r.issue, 'timeout');
+  const before = calls;
+  await op.placesAround('y', 1, 2, 1000);
+  assert.ok(calls > before, 'partial result was retried, not served from cache');
+});
+
+test('Wikipedia fallback keeps real sights and drops schools, stations and wards', async () => {
+  const pages = [
+    { title: 'Kapaleeshwarar Temple', description: 'Hindu temple in Chennai', coordinates: [{ lat: 13.03, lon: 80.27 }] },
+    { title: 'Marina Beach', description: 'urban beach in Chennai', coordinates: [{ lat: 13.05, lon: 80.28 }] },
+    { title: 'Fort St. George', description: 'fortress in Chennai', coordinates: [{ lat: 13.08, lon: 80.29 }] },
+    { title: 'Chennai Central', description: 'railway station in Chennai', coordinates: [{ lat: 13.08, lon: 80.27 }] },
+    { title: 'Presidency College', description: 'college in Chennai', coordinates: [{ lat: 13.06, lon: 80.28 }] },
+    { title: 'Ward 120 <script>', description: 'temple ward', coordinates: [{ lat: 13.06, lon: 80.28 }] },
+    { title: 'No coords temple' },
+  ];
+  let requested;
+  const wiki = createWikipedia({
+    fetchImpl: async (url) => {
+      requested = url;
+      return { ok: true, text: async () => JSON.stringify({ query: { pages } }) };
+    },
+  });
+  const sights = await wiki.sightsAround('chennai', 13.0827, 80.2707);
+  assert.equal(requested.hostname, 'en.wikipedia.org');
+  assert.equal(requested.searchParams.get('ggscoord'), '13.08270|80.27070');
+  assert.deepEqual(sights.map((s) => s.name).sort(), ['Fort St. George', 'Kapaleeshwarar Temple', 'Marina Beach']);
+  assert.equal(sights.find((s) => s.name === 'Marina Beach').wikiCategory, 'Beach');
 });
 
 test('live destination: no fabricated ratings, typical stay prices, real transport hubs', () => {
@@ -139,9 +195,30 @@ test('API: any Indian city plans with live data; failures degrade gracefully', a
     const plan = await client(down.base).req('/api/plan?destination=leh&days=2');
     assert.equal(plan.status, 200);
     assert.equal(plan.json.destination.degraded, true);
+    assert.equal(plan.json.destination.liveStatus, 'unavailable');
     assert.equal(plan.headers.get('cache-control'), 'no-store');
   } finally {
     await down.close();
+  }
+
+  // Overpass down entirely, but Wikipedia rescues the sights.
+  const rescued = await startServer(
+    {},
+    {
+      overpass: { placesAround: async () => ({ sights: [], food: [], stays: [], rail: [], bus: [], failed: ['sights', 'food', 'hubs'], issue: 'timeout' }) },
+      wikipedia: { sightsAround: async () => FAKE_PLACES.sights.map((s) => ({ ...s, wikiCategory: 'Heritage' })) },
+    }
+  );
+  try {
+    const plan = await client(rescued.base).req('/api/plan?destination=chennai&days=3');
+    assert.equal(plan.status, 200);
+    assert.equal(plan.json.destination.degraded, false);
+    assert.equal(plan.json.destination.liveStatus, 'partial');
+    assert.equal(plan.json.destination.sightsSource, 'wikipedia');
+    assert.ok(plan.json.itinerary[0].stops.length > 0, 'day 1 has real stops');
+    assert.equal(plan.headers.get('cache-control'), 'no-store');
+  } finally {
+    await rescued.close();
   }
 });
 

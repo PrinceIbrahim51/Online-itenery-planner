@@ -30,7 +30,9 @@ const cityQuery = z.object({ q: safeText(1, 60) }).strict();
 // Public, user-independent responses can be cached by the CDN.
 const PUBLIC_CACHE = 'public, max-age=300, s-maxage=21600, stale-while-revalidate=86400';
 
-function planRouter({ openTripMap, overpass, logger, planLimiter = (_q, _s, n) => n() }) {
+const EMPTY_PLACES = () => ({ sights: [], food: [], stays: [], rail: [], bus: [], failed: [], issue: null });
+
+function planRouter({ openTripMap, overpass, wikipedia, logger, planLimiter = (_q, _s, n) => n() }) {
   const router = express.Router();
   const curatedSlugs = new Set(destinations.map((d) => d.slug));
 
@@ -54,18 +56,40 @@ function planRouter({ openTripMap, overpass, logger, planLimiter = (_q, _s, n) =
 
     const city = india.getCity(key);
     if (city) {
-      let places = { sights: [], food: [], stays: [], rail: [], bus: [] };
-      let degraded = !overpass;
+      let places = EMPTY_PLACES();
       if (overpass) {
         try {
-          places = await overpass.placesAround(city.slug, city.lat, city.lng, india.searchRadius(city));
+          places = { ...EMPTY_PLACES(), ...(await overpass.placesAround(city.slug, city.lat, city.lng, india.searchRadius(city))) };
         } catch (err) {
-          logger.warn(`Live place lookup failed for ${city.slug}: ${err.message}`);
-          degraded = true;
+          places = { ...EMPTY_PLACES(), failed: ['sights', 'food', 'hubs'], issue: 'error' };
+        }
+        if (places.failed.length) logger.warn(`Live places partly failed for ${city.slug}: ${places.failed.join(',')} (${places.issue})`);
+      } else {
+        places.failed = ['sights', 'food', 'hubs'];
+        places.issue = 'disabled';
+      }
+
+      // Too few sights (or none)? Top up from Wikipedia — an independent source.
+      let sightsSource = places.sights.length ? 'openstreetmap' : null;
+      if (wikipedia && places.sights.length < 4) {
+        try {
+          const known = new Set(places.sights.map((s) => s.name.toLowerCase()));
+          const extra = (await wikipedia.sightsAround(city.slug, city.lat, city.lng)).filter((s) => !known.has(s.name.toLowerCase()));
+          if (extra.length) {
+            places.sights = [...places.sights, ...extra];
+            sightsSource = sightsSource ? 'mixed' : 'wikipedia';
+          }
+        } catch (err) {
+          logger.warn(`Wikipedia fallback failed for ${city.slug}: ${err.message}`);
         }
       }
+
       const dest = india.toDestination(city, places, curatedSlugs);
-      dest.degraded = degraded;
+      dest.degraded = places.sights.length === 0;
+      dest.liveStatus = dest.degraded ? 'unavailable' : places.failed.length ? 'partial' : 'ok';
+      dest.liveIssue = places.issue;
+      dest.failedParts = places.failed;
+      dest.sightsSource = sightsSource;
       return dest;
     }
 
@@ -94,8 +118,12 @@ function planRouter({ openTripMap, overpass, logger, planLimiter = (_q, _s, n) =
     if (!dest) throw new HttpError(404, 'We couldn’t find that place. Try another Indian city or town.');
     const plan = generateItinerary(dest, q);
     plan.destination.degraded = Boolean(dest.degraded);
-    // Don't let the CDN pin a degraded (live-data-failed) plan for hours.
-    res.set('Cache-Control', dest.degraded ? 'no-store' : PUBLIC_CACHE);
+    plan.destination.liveStatus = dest.liveStatus || 'ok';
+    plan.destination.liveIssue = dest.liveIssue || null;
+    plan.destination.failedParts = dest.failedParts || [];
+    plan.destination.sightsSource = dest.sightsSource || null;
+    // Only let the CDN cache complete plans; partial ones should retry soon.
+    res.set('Cache-Control', plan.destination.liveStatus === 'ok' ? PUBLIC_CACHE : 'no-store');
     res.json(plan);
   });
 

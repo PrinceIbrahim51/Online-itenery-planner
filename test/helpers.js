@@ -13,7 +13,7 @@ async function startServer(envOverrides = {}, options = {}) {
   });
   const db = openSqlite(':memory:');
   // No network in tests: live place lookups use an injected fake (or none).
-  const { app } = createApp(config, { db, overpass: options.overpass ?? null });
+  const { app } = createApp(config, { db, overpass: options.overpass ?? null, wikipedia: options.wikipedia ?? null });
   const server = await new Promise((resolve) => {
     const s = app.listen(0, '127.0.0.1', () => resolve(s));
   });

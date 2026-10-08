@@ -8,16 +8,21 @@ const { cleanText } = require('../security/sanitize');
  * Queries are built ONLY from numeric coordinates taken from our bundled city
  * list — user input never reaches the query, and only fixed hosts are contacted.
  * Data © OpenStreetMap contributors, ODbL.
+ *
+ * Big cities are expensive to query, so the work is split into three small
+ * queries (sights / food & stays / transport hubs) that run in parallel and
+ * fail independently: a slow restaurant lookup can no longer wipe out sights.
  */
 const ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
-  'https://overpass.kumi.systems/api/interpreter',
   'https://overpass.private.coffee/api/interpreter',
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
 ];
-const TIMEOUT_MS = 14000;
+const TIMEOUT_MS = 12000;
 const MAX_BYTES = 6 * 1024 * 1024;
 const CACHE_MAX = 300;
 const CACHE_TTL = 12 * 60 * 60 * 1000;
+const PARTS = ['sights', 'food', 'hubs'];
 
 const elementSchema = z.object({
   type: z.enum(['node', 'way', 'relation']),
@@ -36,30 +41,35 @@ const num = (n) => {
 };
 const int = (n) => String(Math.max(100, Math.min(50000, Math.round(Number(n) || 0))));
 
-function buildQuery(lat, lng, radius) {
+/** Three independent Overpass QL queries around a point. */
+function buildQueries(lat, lng, radius) {
   const c = `${num(lat)},${num(lng)}`;
   const r = int(radius);
-  const near = int(Math.min(radius, 3500));
-  const wide = int(Math.max(radius * 2.5, 20000));
-  return `[out:json][timeout:25];
+  const wide = int(Math.min(Math.max(radius * 2, 15000), 25000));
+  const food = int(Math.min(radius * 0.4, 2500));
+  const stays = int(Math.min(radius * 0.6, 5000));
+  const head = '[out:json][timeout:11];';
+  return {
+    sights: `${head}
 (
   nwr(around:${r},${c})["tourism"~"^(attraction|museum|viewpoint|zoo|theme_park|gallery|aquarium)$"]["name"];
   nwr(around:${r},${c})["historic"~"^(monument|fort|castle|memorial|ruins|palace|archaeological_site|temple|city_gate)$"]["name"];
   nwr(around:${r},${c})["amenity"="place_of_worship"]["name"]["wikidata"];
   nwr(around:${r},${c})["leisure"~"^(park|garden|nature_reserve)$"]["name"]["wikidata"];
   nwr(around:${wide},${c})["natural"~"^(beach|waterfall)$"]["name"];
-  nwr(around:${wide},${c})["boundary"="national_park"]["name"];
-)->.sights;
-.sights out center tags 160;
-nwr(around:${near},${c})["amenity"~"^(restaurant|cafe)$"]["name"]->.food;
-.food out center tags 120;
-nwr(around:${r},${c})["tourism"~"^(hotel|guest_house|hostel|resort|motel|apartment)$"]["name"]->.stays;
-.stays out center tags 120;
-(
-  nwr(around:${wide},${c})["railway"="station"]["name"]["station"!~"subway|light_rail|monorail"];
-  nwr(around:${int(radius * 1.5)},${c})["amenity"="bus_station"]["name"];
-)->.hubs;
-.hubs out center tags 40;`;
+);
+out tags center 160;`,
+    food: `${head}
+nwr(around:${food},${c})["amenity"~"^(restaurant|cafe)$"]["name"];
+out tags center 120;
+nwr(around:${stays},${c})["tourism"~"^(hotel|guest_house|hostel|resort|motel)$"]["name"];
+out tags center 120;`,
+    hubs: `${head}
+node(around:${wide},${c})["railway"="station"]["name"]["station"!~"subway|light_rail|monorail"];
+out tags 30;
+nwr(around:${int(radius)},${c})["amenity"="bus_station"]["name"];
+out tags center 20;`,
+  };
 }
 
 function classify(tags) {
@@ -90,7 +100,7 @@ function normalise(raw) {
     if (seen.has(key)) continue;
     seen.add(key);
     const pick = (k, max = 120) => (tags[k] ? cleanText(tags[k]).slice(0, max) : null);
-    const entry = {
+    out[BUCKET[kind]].push({
       name,
       lat,
       lng,
@@ -110,51 +120,99 @@ function normalise(raw) {
         suburb: pick('addr:suburb', 60) || pick('addr:city', 60),
         description: pick('description', 200),
       },
-    };
-    out[BUCKET[kind]].push(entry);
+    });
   }
   return out;
+}
+
+/** Coarse, non-sensitive failure code (safe to show users for troubleshooting). */
+function issueCode(err) {
+  if (!err) return 'unknown';
+  if (err.name === 'TimeoutError' || err.name === 'AbortError') return 'timeout';
+  const m = /Overpass (\d{3})/.exec(err.message || '');
+  if (m) return `http_${m[1]}`;
+  if (/fetch failed|ENOTFOUND|ECONN/i.test(err.message || '')) return 'network';
+  return 'error';
 }
 
 function createOverpass({ fetchImpl = fetch, endpoints = ENDPOINTS, logger } = {}) {
   const cache = new Map();
   const inflight = new Map();
 
-  async function query(body) {
+  async function queryOnce(url, body) {
+    const res = await fetchImpl(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Accept: 'application/json',
+        'User-Agent': 'VoyagrItineraryPlanner/1.1 (+https://voyagr-itinerary-planner.vercel.app)',
+      },
+      body: `data=${encodeURIComponent(body)}`,
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+      redirect: 'error',
+    });
+    if (!res.ok) throw new Error(`Overpass ${res.status}`);
+    const text = await res.text();
+    if (text.length > MAX_BYTES) throw new Error('Overpass response too large');
+    const parsed = responseSchema.safeParse(JSON.parse(text));
+    if (!parsed.success) throw new Error('Unexpected Overpass response');
+    return parsed.data.elements;
+  }
+
+  /** Try each endpoint in turn, starting at a different one per part to spread load. */
+  async function query(body, offset) {
     let lastErr;
-    for (const url of endpoints) {
+    for (let i = 0; i < Math.min(endpoints.length, 2); i++) {
+      const url = endpoints[(offset + i) % endpoints.length];
       try {
-        const res = await fetchImpl(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'VoyagrItineraryPlanner/1.0' },
-          body: `data=${encodeURIComponent(body)}`,
-          signal: AbortSignal.timeout(TIMEOUT_MS),
-          redirect: 'error',
-        });
-        if (!res.ok) throw new Error(`Overpass ${res.status}`);
-        const text = await res.text();
-        if (text.length > MAX_BYTES) throw new Error('Overpass response too large');
-        const parsed = responseSchema.safeParse(JSON.parse(text));
-        if (!parsed.success) throw new Error('Unexpected Overpass response');
-        return parsed.data.elements;
+        return await queryOnce(url, body);
       } catch (err) {
         lastErr = err;
-        logger?.warn(`Overpass endpoint failed (${new URL(url).host}): ${err.message}`);
+        logger?.warn(`Overpass failed (${new URL(url).host}): ${issueCode(err)} ${err.message}`);
       }
     }
     throw lastErr || new Error('Overpass unavailable');
   }
 
-  /** Returns { sights, food, stays, rail, bus } around a point; cached and de-duplicated. */
+  async function fetchAll(lat, lng, radius) {
+    const queries = buildQueries(lat, lng, radius);
+    const settled = await Promise.allSettled(PARTS.map((p, i) => query(queries[p], i)));
+    const merged = { sights: [], food: [], stays: [], rail: [], bus: [] };
+    const failed = [];
+    let issue = null;
+    const seen = new Set();
+    settled.forEach((r, i) => {
+      if (r.status === 'fulfilled') {
+        const part = normalise(r.value);
+        for (const k of Object.keys(merged)) {
+          for (const item of part[k]) {
+            const id = `${k}|${item.name.toLowerCase()}`;
+            if (!seen.has(id)) {
+              seen.add(id);
+              merged[k].push(item);
+            }
+          }
+        }
+      } else {
+        failed.push(PARTS[i]);
+        issue ??= issueCode(r.reason);
+      }
+    });
+    return { ...merged, failed, issue };
+  }
+
+  /** Returns { sights, food, stays, rail, bus, failed[], issue } — never throws. */
   async function placesAround(key, lat, lng, radius) {
     const hit = cache.get(key);
     if (hit && hit.expires > Date.now()) return hit.value;
     if (inflight.has(key)) return inflight.get(key);
-    const p = query(buildQuery(lat, lng, radius))
-      .then((elements) => {
-        const value = normalise(elements);
-        if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value);
-        cache.set(key, { value, expires: Date.now() + CACHE_TTL });
+    const p = fetchAll(lat, lng, radius)
+      .then((value) => {
+        // Only cache complete results so a transient failure is retried next time.
+        if (!value.failed.length) {
+          if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value);
+          cache.set(key, { value, expires: Date.now() + CACHE_TTL });
+        }
         return value;
       })
       .finally(() => inflight.delete(key));
@@ -165,4 +223,4 @@ function createOverpass({ fetchImpl = fetch, endpoints = ENDPOINTS, logger } = {
   return { placesAround };
 }
 
-module.exports = { createOverpass, buildQuery, normalise };
+module.exports = { createOverpass, buildQueries, normalise, issueCode, ENDPOINTS };
