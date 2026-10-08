@@ -156,6 +156,10 @@ test('Vercel without DATABASE_URL: planner works, accounts are cleanly disabled'
     assert.equal((await c.req('/api/trips')).status, 401);
     assert.equal((await c.req('/api/admin/stats')).status, 401);
     assert.equal((await c.req('/api/plan?destination=jaipur&days=2')).status, 200);
+    // Vercel's rewrite may append the matched route as ?path=… — it must not break validation.
+    assert.equal((await c.req('/api/plan?destination=jaipur&days=2&path=plan')).status, 200);
+    assert.equal((await c.req('/api/cities?path=cities&q=goa')).status, 200);
+    assert.equal((await c.req('/api/destinations?path=destinations')).status, 200);
   } finally {
     await s.close();
   }

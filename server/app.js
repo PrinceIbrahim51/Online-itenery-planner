@@ -62,6 +62,23 @@ function createApp(config, { db, openTripMap, overpass } = {}) {
   app.set('env', config.isProd ? 'production' : config.env); // never run Express in debug mode in prod
   app.set('query parser', 'simple'); // no nested objects/arrays from query strings
 
+  // Vercel's rewrite to the single API function can append the matched route as a
+  // `path` query parameter. Strip it so strict query validation sees only client params.
+  if (config.onVercel) {
+    app.use((req, _res, next) => {
+      const i = req.url.indexOf('?');
+      if (i !== -1) {
+        const params = new URLSearchParams(req.url.slice(i + 1));
+        if (params.has('path')) {
+          params.delete('path');
+          const qs = params.toString();
+          req.url = req.url.slice(0, i) + (qs ? `?${qs}` : '');
+        }
+      }
+      next();
+    });
+  }
+
   // ---------- Security headers ----------
   app.use(
     helmet({
