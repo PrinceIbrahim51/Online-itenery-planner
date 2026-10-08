@@ -65,7 +65,7 @@ function planRouter({ openTripMap, overpass, wikipedia, logger, planLimiter = (_
         overpass
           ? overpass.placesAround(city.slug, city.lat, city.lng, india.searchRadius(city))
           : Promise.reject(Object.assign(new Error('disabled'), { code: 'disabled' })),
-        wikipedia ? wikipedia.placesAround(city.slug, city.lat, city.lng) : Promise.resolve({ sights: [], rail: [] }),
+        wikipedia ? wikipedia.placesAround(city.slug, city.lat, city.lng, city.name) : Promise.resolve({ sights: [], rail: [] }),
       ]);
 
       const places =

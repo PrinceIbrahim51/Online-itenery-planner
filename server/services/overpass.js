@@ -19,6 +19,7 @@ const ENDPOINTS = [
   'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
 ];
 const TIMEOUT_MS = 12000;
+const BUSY_BACKOFF_MS = 600;
 const MAX_BYTES = 6 * 1024 * 1024;
 const CACHE_MAX = 300;
 const CACHE_TTL = 12 * 60 * 60 * 1000;
@@ -170,8 +171,11 @@ function createOverpass({ fetchImpl = fetch, endpoints = ENDPOINTS, logger } = {
       } catch (err) {
         lastErr = err;
         const host = new URL(url).host;
-        attempts.push(`${host}:${issueCode(err)}`);
-        logger?.warn(`Overpass failed (${host}): ${issueCode(err)} ${err.message}`);
+        const code = issueCode(err);
+        attempts.push(`${host}:${code}`);
+        logger?.warn(`Overpass failed (${host}): ${code} ${err.message}`);
+        // Overloaded / rate-limited: give the public servers a moment before the next mirror.
+        if (code === 'http_429' || code === 'http_504') await new Promise((r) => setTimeout(r, BUSY_BACKOFF_MS));
       }
     }
     const err = lastErr || new Error('Overpass unavailable');

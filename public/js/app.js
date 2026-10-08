@@ -453,17 +453,29 @@ function renderPlan(p) {
   const banner = $('#r-banner');
   const status = d.liveStatus || 'ok';
   banner.hidden = status === 'ok';
-  const reason = d.liveIssue ? ` (${d.liveIssue.replace('_', ' ')})` : '';
+  // Plain-English reason; the raw code stays in the tooltip for troubleshooting.
+  const REASONS = {
+    timeout: 'the free map service was too busy to answer in time',
+    http_504: 'the free map service was too busy to answer in time',
+    http_429: 'the free map service is limiting requests right now',
+    http_503: 'the free map service is temporarily down',
+    http_502: 'the free map service is temporarily down',
+    http_500: 'the free map service had an internal error',
+    network: 'we couldn’t reach the free map service',
+  };
+  const reasonText = d.liveIssue ? REASONS[d.liveIssue] || 'the free map service didn’t respond properly' : '';
+  const reason = reasonText ? ` because ${reasonText}` : '';
+  banner.title = d.liveIssue ? `Code: ${d.liveIssue}` : '';
   if (status === 'unavailable') {
     clear(banner).append(
-      `Live places couldn’t be loaded right now${reason}, so this plan shows transport, fares and costs only. `,
+      `Live places couldn’t be loaded${reason}, so this plan shows transport, fares and costs only. `,
       h('a', { href: p.searchLinks.sights }, 'Browse sights on Google Maps ↗'),
       ' or try again in a minute.'
     );
   } else if (status === 'partial') {
     const missing = (d.failedParts || []).map((x) => ({ sights: 'sights', food: 'restaurants & hotels', hubs: 'station details' })[x]).filter(Boolean);
     clear(banner).append(
-      `Some live data didn’t load${missing.length ? ` (${missing.join(', ')})` : ''}${reason} — showing everything we could get. `,
+      `Some live data (${missing.join(', ') || 'details'}) didn’t load${reason}. This isn’t a problem with your search — we’re showing everything we could get. `,
       ...(d.failedParts?.includes('food') ? [h('a', { href: p.searchLinks.restaurants }, 'Restaurants on Google Maps ↗'), ' · '] : []),
       'Refresh in a minute for the full plan.'
     );

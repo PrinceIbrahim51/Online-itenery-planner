@@ -335,3 +335,31 @@ test('API: districts plan, states overview, did-you-mean search', async () => {
     await srv.close();
   }
 });
+
+test('Wikipedia name search finds district sights and drops far-away namesakes', async () => {
+  const urls = [];
+  const wiki = createWikipedia({
+    fetchImpl: async (url) => {
+      urls.push(url);
+      const pages =
+        url.searchParams.get('generator') === 'search'
+          ? [
+              { title: 'Courtallam Falls', description: 'waterfall in Tenkasi district', coordinates: [{ lat: 8.93, lon: 77.27 }] },
+              { title: 'Kasi Viswanathar Temple, Tenkasi', description: 'Hindu temple', coordinates: [{ lat: 8.96, lon: 77.3 }] },
+              { title: 'Tenkasi Lake (Kashmir)', description: 'lake in Kashmir', coordinates: [{ lat: 34.0, lon: 74.8 }] },
+            ]
+          : [];
+      return { ok: true, text: async () => JSON.stringify({ query: { pages } }) };
+    },
+  });
+  const { sights } = await wiki.placesAround('district-tenkasi-tn', 9.017, 77.4239, 'Tenkasi district');
+  assert.equal(urls.length, 2, 'point search + name search');
+  const search = urls.find((u) => u.searchParams.get('generator') === 'search');
+  assert.match(search.searchParams.get('gsrsearch'), /^"Tenkasi" temple OR falls/);
+  assert.deepEqual(sights.map((x) => x.name).sort(), ['Courtallam Falls', 'Kasi Viswanathar Temple, Tenkasi']);
+
+  // Names are reduced to letters, so nothing odd reaches the search query.
+  await createWikipedia({ fetchImpl: async (url) => { urls.push(url); return { ok: true, text: async () => '{"query":{"pages":[]}}' }; } })
+    .placesAround('x', 1, 2, 'Foo" OR insource:/x/');
+  assert.match(urls.at(-1).searchParams.get('gsrsearch'), /^"Foo OR insource x" /);
+});
