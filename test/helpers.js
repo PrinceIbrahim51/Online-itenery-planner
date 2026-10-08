@@ -2,17 +2,18 @@
 
 const { createApp } = require('../server/app');
 const { loadConfig } = require('../server/config');
-const { openDatabase } = require('../server/db');
+const { openSqlite } = require('../server/db');
 
-async function startServer(envOverrides = {}) {
+async function startServer(envOverrides = {}, options = {}) {
   const config = loadConfig({
     NODE_ENV: 'test',
     COOKIE_SECURE: 'false',
     DATABASE_PATH: ':memory:',
     ...envOverrides,
   });
-  const db = openDatabase(':memory:');
-  const { app } = createApp(config, { db });
+  const db = openSqlite(':memory:');
+  // No network in tests: live place lookups use an injected fake (or none).
+  const { app } = createApp(config, { db, overpass: options.overpass ?? null });
   const server = await new Promise((resolve) => {
     const s = app.listen(0, '127.0.0.1', () => resolve(s));
   });

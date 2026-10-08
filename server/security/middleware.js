@@ -13,13 +13,21 @@ class HttpError extends Error {
 
 /** Attaches req.user / req.csrf when a valid session cookie is present. */
 function loadSession(sessions) {
-  return (req, _res, next) => {
-    const token = req.cookies?.[COOKIE_NAME];
-    const session = token ? sessions.lookup(token) : null;
-    req.user = session?.user ?? null;
-    req.csrf = session?.csrf ?? null;
-    req.sessionToken = session ? token : null;
-    next();
+  return async (req, _res, next) => {
+    req.user = null;
+    req.csrf = null;
+    req.sessionToken = null;
+    if (!sessions) return next(); // accounts disabled
+    try {
+      const token = req.cookies?.[COOKIE_NAME];
+      const session = token ? await sessions.lookup(token) : null;
+      req.user = session?.user ?? null;
+      req.csrf = session?.csrf ?? null;
+      req.sessionToken = session ? token : null;
+      next();
+    } catch (err) {
+      next(err);
+    }
   };
 }
 

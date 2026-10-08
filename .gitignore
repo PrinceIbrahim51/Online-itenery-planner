@@ -7,7 +7,7 @@ node_modules/
 !.env.example
 
 # Local database files
-data/
+/data/
 *.db
 *.db-journal
 *.db-wal

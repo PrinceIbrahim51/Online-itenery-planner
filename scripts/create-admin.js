@@ -22,18 +22,20 @@ async function main() {
   if (password.length < 14) problems.push('at least 14 characters for admin accounts');
   if (problems.length) throw new Error(`ADMIN_PASSWORD needs: ${problems.join(', ')}.`);
 
-  const db = openDatabase(config.databasePath);
+  // Works against local SQLite or, with DATABASE_URL set, the production Postgres database.
+  const db = openDatabase(config);
+  await db.ready;
   const hash = await hashPassword(password);
-  const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+  const existing = await db.get('SELECT id FROM users WHERE email = ?', email);
   if (existing) {
-    db.prepare("UPDATE users SET role = 'admin', password_hash = ?, disabled = 0, failed_logins = 0, locked_until = 0 WHERE id = ?").run(hash, existing.id);
-    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(existing.id);
+    await db.run("UPDATE users SET role = 'admin', password_hash = ?, disabled = 0, failed_logins = 0, locked_until = 0 WHERE id = ?", hash, existing.id);
+    await db.run('DELETE FROM sessions WHERE user_id = ?', existing.id);
     console.log(`Promoted existing user ${email} to admin (password reset, sessions revoked).`);
   } else {
-    db.prepare("INSERT INTO users (email, name, password_hash, role, created_at) VALUES (?, 'Administrator', ?, 'admin', ?)").run(email, hash, Date.now());
+    await db.run("INSERT INTO users (email, name, password_hash, role, created_at) VALUES (?, 'Administrator', ?, 'admin', ?)", email, hash, Date.now());
     console.log(`Created admin ${email}.`);
   }
-  db.close();
+  await db.close();
   console.log('Now remove ADMIN_PASSWORD from your environment.');
 }
 

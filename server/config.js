@@ -22,8 +22,13 @@ const schema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   HOST: z.string().min(1).default('127.0.0.1'),
   DATABASE_PATH: z.string().min(1).default('./data/voyagr.db'),
+  DATABASE_URL: z
+    .string()
+    .default('')
+    .refine((v) => v === '' || /^postgres(ql)?:\/\//.test(v), 'must be a postgres:// URL'),
+  VERCEL: z.string().default(''),
   CORS_ORIGINS: z.string().default(''),
-  TRUST_PROXY: z.coerce.number().int().min(0).max(10).default(0),
+  TRUST_PROXY: z.preprocess((v) => (v === '' ? undefined : v), z.coerce.number().int().min(0).max(10).optional()),
   SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(24 * 7).default(12),
   COOKIE_SECURE: bool('true'),
   OPENTRIPMAP_API_KEY: z.string().default(''),
@@ -60,6 +65,11 @@ function loadConfig(env = process.env) {
     throw new Error('COOKIE_SECURE must be true in production (serve the app over HTTPS).');
   }
 
+  const onVercel = c.VERCEL === '1';
+  // Vercel's filesystem is ephemeral and per-instance: a local SQLite file would lose
+  // accounts and log people out at random. Accounts therefore need DATABASE_URL there.
+  const accountsEnabled = Boolean(c.DATABASE_URL) || !onVercel;
+
   return Object.freeze({
     env: c.NODE_ENV,
     isProd: c.NODE_ENV === 'production',
@@ -67,8 +77,11 @@ function loadConfig(env = process.env) {
     port: c.PORT,
     host: c.HOST,
     databasePath: c.DATABASE_PATH,
+    databaseUrl: c.DATABASE_URL,
+    onVercel,
+    accountsEnabled,
     corsOrigins: Object.freeze(corsOrigins),
-    trustProxy: c.TRUST_PROXY,
+    trustProxy: c.TRUST_PROXY ?? (onVercel ? 1 : 0),
     sessionTtlMs: c.SESSION_TTL_HOURS * 60 * 60 * 1000,
     cookieSecure: c.COOKIE_SECURE,
     openTripMapKey: c.OPENTRIPMAP_API_KEY,

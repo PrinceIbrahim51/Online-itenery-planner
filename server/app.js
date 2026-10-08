@@ -22,6 +22,7 @@ const { planRouter } = require('./routes/plan');
 const { tripsRouter } = require('./routes/trips');
 const { adminRouter } = require('./routes/admin');
 const { createOpenTripMap } = require('./services/opentripmap');
+const { createOverpass } = require('./services/overpass');
 
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 
@@ -34,14 +35,25 @@ function createLogger(config) {
   };
 }
 
-function createApp(config, { db = openDatabase(config.databasePath), openTripMap } = {}) {
+function createApp(config, { db, openTripMap, overpass } = {}) {
   const logger = createLogger(config);
-  const sessions = createSessionStore(db, config.sessionTtlMs);
+  // Accounts need persistent storage; without it (e.g. Vercel with no DATABASE_URL) the
+  // planner still works and every account route answers 503.
+  const database = config.accountsEnabled ? (db ?? openDatabase(config)) : null;
+  const sessions = database ? createSessionStore(database, config.sessionTtlMs) : null;
   const otm = openTripMap ?? (config.openTripMapKey ? createOpenTripMap(config.openTripMapKey) : null);
+  const places = overpass === undefined ? createOverpass({ logger }) : overpass;
 
-  const insertAudit = db.prepare('INSERT INTO audit_log (user_id, action, detail, ip, created_at) VALUES (?, ?, ?, ?, ?)');
-  const audit = (req, action, detail = null, userId = req.user?.id ?? null) => {
-    insertAudit.run(userId, action, detail ? String(detail).slice(0, 200) : null, req.ip ?? null, Date.now());
+  const audit = async (req, action, detail = null, userId = req.user?.id ?? null) => {
+    if (!database) return;
+    await database.run(
+      'INSERT INTO audit_log (user_id, action, detail, ip, created_at) VALUES (?, ?, ?, ?, ?)',
+      userId,
+      action,
+      detail ? String(detail).slice(0, 200) : null,
+      req.ip ?? null,
+      Date.now()
+    );
   };
 
   const app = express();
@@ -72,6 +84,7 @@ function createApp(config, { db = openDatabase(config.databasePath), openTripMap
       },
       strictTransportSecurity: config.isProd ? { maxAge: 63072000, includeSubDomains: true, preload: true } : false,
       referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+      xFrameOptions: { action: 'deny' },
       crossOriginEmbedderPolicy: false, // allow Google Fonts
     })
   );
@@ -117,10 +130,10 @@ function createApp(config, { db = openDatabase(config.databasePath), openTripMap
   });
   app.use('/api', loadSession(sessions), requireJson, csrfProtection);
   app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
-  app.use('/api/auth', authRouter({ db, sessions, config, audit, authLimiter }));
-  app.use('/api', planRouter({ openTripMap: otm, logger, planLimiter }));
-  app.use('/api/trips', tripsRouter({ db, audit }));
-  app.use('/api/admin', adminRouter({ db, sessions, audit }));
+  app.use('/api/auth', authRouter({ db: database, sessions, config, audit, authLimiter }));
+  app.use('/api', planRouter({ openTripMap: otm, overpass: places, logger, planLimiter }));
+  app.use('/api/trips', tripsRouter({ db: database, audit }));
+  app.use('/api/admin', adminRouter({ db: database, sessions, audit }));
   app.use('/api', notFound);
 
   // ---------- Static frontend (only the public/ folder is ever served) ----------
@@ -138,11 +151,13 @@ function createApp(config, { db = openDatabase(config.databasePath), openTripMap
   app.use(notFound);
   app.use(errorHandler(logger));
 
-  // Periodically clear expired sessions.
-  const timer = setInterval(() => sessions.purgeExpired(), 60 * 60 * 1000);
-  timer.unref();
+  // Periodically clear expired sessions (long-running servers; serverless instances are short-lived).
+  if (sessions && !config.onVercel) {
+    const timer = setInterval(() => sessions.purgeExpired().catch((e) => logger.warn(e.message)), 60 * 60 * 1000);
+    timer.unref();
+  }
 
-  return { app, db, logger };
+  return { app, db: database, logger };
 }
 
 module.exports = { createApp };

@@ -1,6 +1,7 @@
 'use strict';
 
 const { compareFares, cheapestFor } = require('./fares');
+const { haversineKm } = require('./geo');
 
 const DAY_HOURS = 8;
 const ROAD_FACTOR = 1.35; // straight-line → road distance
@@ -11,15 +12,10 @@ const TIER_PREFS = {
   premium: ['premium', 'comfort', 'budget'],
 };
 
-function haversineKm([lat1, lng1], [lat2, lng2]) {
-  const toRad = (d) => (d * Math.PI) / 180;
-  const dLat = toRad(lat2 - lat1);
-  const dLng = toRad(lng2 - lng1);
-  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
-  return 6371 * 2 * Math.asin(Math.sqrt(a));
-}
+const roadKm = (a, b) => Math.round(haversineKm(a, b) * ROAD_FACTOR * 10) / 10;
 
-const roadKm = (a, b) => Math.round(haversineKm([a.lat, a.lng], [b.lat, b.lng]) * ROAD_FACTOR * 10) / 10;
+// Curated places carry a rating; live (OpenStreetMap) places carry a computed rank instead.
+const score = (x) => x.rank ?? x.rating ?? 0;
 
 const mapsLink = (name, area, city) =>
   `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${name}, ${area}, ${city}`)}`;
@@ -46,7 +42,7 @@ function suggestLeg(dest, from, to, budget) {
 
 /** Groups attractions into days: seed with the best remaining sight, then add the nearest ones. */
 function planDays(attractions, days) {
-  const pool = [...attractions].sort((a, b) => b.rating - a.rating);
+  const pool = [...attractions].sort((a, b) => score(b) - score(a));
   const plan = [];
   for (let d = 0; d < days && pool.length; d++) {
     const seed = pool.shift();
@@ -70,13 +66,13 @@ function planDays(attractions, days) {
 function pickRestaurant(restaurants, near, budget, used) {
   if (!restaurants.length) return null;
   const prefs = TIER_PREFS[budget];
-  const score = (r) => {
-    const tierPenalty = prefs.indexOf(r.tier) * 4;
+  const cost = (r) => {
+    const tierPenalty = r.tier ? prefs.indexOf(r.tier) * 4 : 2;
     const distance = near ? roadKm(near, r) : 0;
     const repeat = used.has(r.name) ? 50 : 0;
-    return tierPenalty + distance + repeat - r.rating;
+    return tierPenalty + distance + repeat - score(r);
   };
-  const best = [...restaurants].sort((a, b) => score(a) - score(b))[0];
+  const best = [...restaurants].sort((a, b) => cost(a) - cost(b))[0];
   used.add(best.name);
   return best;
 }
@@ -93,15 +89,18 @@ function generateItinerary(dest, { days, travelers, budget }) {
   for (let d = 0; d < days; d++) {
     const stops = dayGroups[d];
     if (!stops) {
-      const trip = dayTrips.shift();
+      // With no sights at all (e.g. live data unavailable), spend day 1 in the city itself.
+      const trip = d === 0 && dayGroups.length === 0 ? null : dayTrips.shift();
       itinerary.push({
         day: d + 1,
-        theme: trip ? `Day trip: ${trip.name}` : 'Leisure & local discoveries',
+        theme: trip ? `Day trip: ${trip.name}` : d === 0 ? `Discover ${city}` : 'Leisure & local discoveries',
         stops: [],
         dayTrip: trip || null,
         note: trip
           ? `${trip.distanceKm} km away — ${trip.note} Hire a car for the day or check train/bus options.`
-          : 'Revisit a favourite spot, try a cooking class or spa, and shop for souvenirs.',
+          : d === 0
+            ? `Explore ${city} on foot: the old market, a local temple or landmark, and street food — ask your hotel for tips.`
+            : 'Revisit a favourite spot, try a cooking class or spa, and shop for souvenirs.',
         meals: {
           lunch: pickRestaurant(dest.restaurants, null, budget, usedRestaurants),
           dinner: pickRestaurant(dest.restaurants, null, budget, usedRestaurants),
@@ -121,7 +120,7 @@ function generateItinerary(dest, { days, travelers, budget }) {
     const areas = [...new Set(stops.map((s) => s.area))];
     itinerary.push({
       day: d + 1,
-      theme: areas.slice(0, 2).join(' & '),
+      theme: areas.slice(0, 2).join(' & ') || city,
       stops: enriched,
       dayTrip: null,
       note: null,
@@ -136,9 +135,12 @@ function generateItinerary(dest, { days, travelers, budget }) {
   const nights = Math.max(0, days - 1);
   const rooms = Math.ceil(travelers / 2);
   const tierStays = dest.stays.filter((s) => s.tier === budget);
+  const guide = dest.stayPriceGuide?.[budget];
   const avgNight = tierStays.length
     ? tierStays.reduce((sum, s) => sum + (s.pricePerNight[0] + s.pricePerNight[1]) / 2, 0) / tierStays.length
-    : 0;
+    : guide
+      ? (guide[0] + guide[1]) / 2
+      : 0;
   const vehicles = Math.ceil(travelers / 3);
   const estimate = {
     stay: Math.round(avgNight * nights * rooms),
@@ -148,7 +150,10 @@ function generateItinerary(dest, { days, travelers, budget }) {
   };
   estimate.total = estimate.stay + estimate.food + estimate.localTransport + estimate.entryFees;
 
-  const withMaps = (items) => items.map((x) => ({ ...x, mapsUrl: mapsLink(x.name, x.area, city) }));
+  const withMaps = (items) => items.map(({ rank, ...x }) => ({ ...x, mapsUrl: mapsLink(x.name, x.area, city) }));
+  const region = dest.region ? `, ${dest.region}` : '';
+  const mapsSearch = (what) => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${what} in ${city}${region}`)}`;
+  const tierRank = (r) => (r.tier ? TIER_PREFS[budget].indexOf(r.tier) : 1);
 
   return {
     destination: {
@@ -161,14 +166,13 @@ function generateItinerary(dest, { days, travelers, budget }) {
     },
     params: { days, travelers, budget, nights, rooms },
     itinerary,
-    attractions: withMaps([...dest.attractions].sort((a, b) => b.rating - a.rating)),
-    restaurants: withMaps(
-      [...dest.restaurants].sort((a, b) => TIER_PREFS[budget].indexOf(a.tier) - TIER_PREFS[budget].indexOf(b.tier) || b.rating - a.rating)
-    ),
+    attractions: withMaps([...dest.attractions].sort((a, b) => score(b) - score(a))),
+    restaurants: withMaps([...dest.restaurants].sort((a, b) => tierRank(a) - tierRank(b) || score(b) - score(a))),
     stays: {
       affordable: withMaps(dest.stays.filter((s) => s.tier === 'budget')),
       comfort: withMaps(dest.stays.filter((s) => s.tier === 'comfort')),
       premium: withMaps(dest.stays.filter((s) => s.tier === 'premium')),
+      priceGuide: dest.stayPriceGuide || null,
       bookingSearchUrl: `https://www.booking.com/searchresults.html?ss=${encodeURIComponent(city)}&group_adults=${travelers}&no_rooms=${rooms}`,
     },
     transport: {
@@ -184,8 +188,18 @@ function generateItinerary(dest, { days, travelers, budget }) {
     },
     dayTrips: dest.dayTrips || [],
     estimate,
-    disclaimer: 'Prices, timings and fares are indicative and change often — please verify before booking.',
+    searchLinks: {
+      sights: mapsSearch('tourist attractions'),
+      restaurants: mapsSearch('best restaurants'),
+      stays: mapsSearch('hotels'),
+    },
+    disclaimer:
+      dest.source === 'live'
+        ? 'Places come live from OpenStreetMap; stay prices are typical ranges for this city, and fares are estimates. Verify before booking.'
+        : 'Prices, timings and fares are indicative and change often — please verify before booking.',
+    attribution:
+      dest.source === 'live' ? 'Place data © OpenStreetMap contributors (ODbL) · City data GeoNames (CC BY 4.0)' : null,
   };
 }
 
-module.exports = { generateItinerary, haversineKm, feeAmount };
+module.exports = { generateItinerary, feeAmount };

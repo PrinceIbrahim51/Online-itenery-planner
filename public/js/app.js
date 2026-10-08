@@ -3,7 +3,7 @@ import { h, clear, $, $$, money, stars } from './dom.js';
 // ---------------------------------------------------------------------------
 // API client — same-origin cookies + CSRF header on every write
 // ---------------------------------------------------------------------------
-const state = { user: null, csrf: null, plan: null, destinations: [], liveSearch: false };
+const state = { user: null, csrf: null, plan: null, destinations: [], accountsEnabled: true, suggestions: new Map() };
 
 async function api(path, { method = 'GET', body } = {}) {
   const headers = { Accept: 'application/json' };
@@ -53,7 +53,8 @@ function setUser(user, csrf) {
   state.csrf = csrf;
   const signedIn = Boolean(user);
   $$('.auth-only').forEach((el) => (el.hidden = !signedIn));
-  $$('.guest-only').forEach((el) => (el.hidden = signedIn));
+  $$('.guest-only').forEach((el) => (el.hidden = signedIn || !state.accountsEnabled));
+  $('#btn-save').hidden = !state.accountsEnabled;
   // Purely cosmetic: the server enforces the admin role on every admin request.
   $$('.admin-only').forEach((el) => (el.hidden = !(signedIn && user.role === 'admin')));
   $('#user-name').textContent = user ? user.name : '';
@@ -101,15 +102,13 @@ async function loadDestinations() {
   try {
     const data = await api('/destinations');
     state.destinations = data.destinations;
-    state.liveSearch = data.liveSearch;
+    if (data.totalCities) $('#city-count').textContent = `${Math.floor(data.totalCities / 100) * 100}+`;
   } catch (err) {
     toast(err.message, true);
     return;
   }
-  const list = clear($('#dest-list'));
   const grid = clear($('#dest-grid'));
   state.destinations.forEach((d, i) => {
-    list.append(h('option', { value: d.name }));
     grid.append(
       h(
         'button',
@@ -118,6 +117,7 @@ async function loadDestinations() {
           class: `dest-card glass art-${i % 8}`,
           onClick: () => {
             $('#f-destination').value = d.name;
+            state.suggestions.set(d.name.toLowerCase(), d.slug);
             $('#plan-form').requestSubmit();
           },
         },
@@ -143,16 +143,53 @@ function initPlanner() {
     })
   );
 
-  $('#plan-form').addEventListener('submit', (e) => {
+  // City autocomplete across every Indian city and town (server-side search).
+  const input = $('#f-destination');
+  let timer;
+  let seq = 0;
+  input.addEventListener('input', () => {
+    clearTimeout(timer);
+    const q = input.value.trim();
+    if (q.length < 2 || state.suggestions.has(q.toLowerCase())) return;
+    timer = setTimeout(async () => {
+      const mine = ++seq;
+      try {
+        const { cities } = await api(`/cities?${new URLSearchParams({ q })}`);
+        if (mine !== seq) return; // a newer search is in flight
+        const list = clear($('#dest-list'));
+        for (const c of cities) {
+          const label = `${c.name}, ${c.state}`;
+          state.suggestions.set(label.toLowerCase(), c.slug);
+          list.append(h('option', { value: label }, c.curated ? 'Featured guide' : ''));
+        }
+      } catch {
+        /* suggestions are best-effort */
+      }
+    }, 180);
+  });
+
+  async function resolveSlug(raw) {
+    const key = raw.toLowerCase();
+    if (state.suggestions.has(key)) return state.suggestions.get(key);
+    const featured = state.destinations.find((d) => d.name.toLowerCase() === key || d.slug === key);
+    if (featured) return featured.slug;
+    const { cities } = await api(`/cities?${new URLSearchParams({ q: raw.split(',')[0] })}`);
+    return cities[0]?.slug ?? null;
+  }
+
+  $('#plan-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const raw = $('#f-destination').value.trim();
+    const raw = input.value.trim();
     if (!raw) return toast('Choose a destination first.', true);
-    const match = state.destinations.find((d) => d.name.toLowerCase() === raw.toLowerCase() || d.slug === raw.toLowerCase());
-    if (!match && !state.liveSearch) {
-      return toast(`Pick one of: ${state.destinations.map((d) => d.name).join(', ')}`, true);
+    let slug;
+    try {
+      slug = await resolveSlug(raw);
+    } catch (err) {
+      return toast(err.message, true);
     }
+    if (!slug) return toast('We couldn’t find that place in India — check the spelling and pick from the suggestions.', true);
     const params = new URLSearchParams({
-      destination: match ? match.slug : raw.toLowerCase(),
+      destination: slug,
       days: String(Math.min(14, Math.max(1, Number(days.value) || 3))),
       travelers: travelers.value,
       budget: new FormData(e.target).get('budget') || 'comfort',
@@ -168,7 +205,8 @@ async function loadPlan(params) {
   showView('plan');
   const panel = $('[data-panel="itinerary"]');
   selectTab('itinerary');
-  loading(panel, 'Crafting your itinerary…');
+  const featured = state.destinations.some((d) => d.slug === params.get('destination'));
+  loading(panel, featured ? 'Crafting your itinerary…' : 'Gathering live sights, food and stays from OpenStreetMap…');
   clear($('#r-estimate'));
   $('#r-title').textContent = '';
   try {
@@ -194,7 +232,16 @@ function renderPlan(p) {
     h('span', { class: 'chip' }, `${params.nights} ${params.nights === 1 ? 'night' : 'nights'} · ${params.rooms} ${params.rooms === 1 ? 'room' : 'rooms'}`),
     h('span', { class: 'chip green' }, `Best time: ${d.bestTime}`)
   );
-  $('#r-disclaimer').textContent = p.disclaimer;
+  $('#r-disclaimer').textContent = p.attribution ? `${p.disclaimer} ${p.attribution}.` : p.disclaimer;
+  const banner = $('#r-banner');
+  banner.hidden = !d.degraded;
+  if (d.degraded) {
+    clear(banner).append(
+      'Live places couldn’t be loaded right now, so this plan shows transport, fares and costs only. ',
+      h('a', { href: p.searchLinks.sights }, 'Browse sights on Google Maps ↗'),
+      ' or try again in a minute.'
+    );
+  }
 
   const e = p.estimate;
   clear($('#r-estimate')).append(
@@ -211,6 +258,17 @@ function renderPlan(p) {
   renderStays(p);
   renderTransport(p);
   renderRides(p);
+}
+
+/** Curated places show a rating; live OpenStreetMap places never get a made-up one. */
+function ratingBadge(x) {
+  if (typeof x.rating === 'number') return h('span', { class: 'rating' }, stars(x.rating));
+  if (x.notable) return h('span', { class: 'rating' }, '✦ Notable');
+  return null;
+}
+
+function emptyWithLink(text, url, label) {
+  return h('div', { class: 'empty glass' }, text, ' ', h('a', { href: url }, label));
 }
 
 function stat(k, v, extra = '') {
@@ -246,7 +304,7 @@ function renderItinerary(p) {
                       (s.legFromPrevious.fare ? ` · from ${money(s.legFromPrevious.fare)}${s.legFromPrevious.app ? ` (${s.legFromPrevious.app})` : ''}` : '')
                   )
                 : null,
-              h('div', { class: 'stop-title' }, h('span', { class: 'slot' }, SLOT_LABEL[s.slot] || 'Anytime'), h('strong', {}, s.name), h('span', { class: 'rating' }, stars(s.rating))),
+              h('div', { class: 'stop-title' }, h('span', { class: 'slot' }, SLOT_LABEL[s.slot] || 'Anytime'), h('strong', {}, s.name), ratingBadge(s)),
               h('p', { class: 'stop-blurb' }, s.blurb),
               h('div', { class: 'stop-meta' }, h('span', {}, `🕘 ${s.hours}`), h('span', {}, `🎟 ${s.fee}`), h('span', {}, `⏱ ~${s.durationHrs} h`), mapLink(s.mapsUrl))
             )
@@ -261,7 +319,7 @@ function renderItinerary(p) {
         'div',
         { class: 'meal' },
         h('div', { class: 'k' }, label),
-        r ? [h('strong', {}, r.name), h('div', { class: 'muted' }, `${r.cuisine} · ${r.area} · ${money(r.costForTwo)} for two`)] : h('span', { class: 'muted' }, 'Explore local eateries nearby')
+        r ? [h('strong', {}, r.name), h('div', { class: 'muted' }, [r.cuisine, r.area, r.costForTwo ? `${money(r.costForTwo)} for two` : null].filter(Boolean).join(' · '))] : h('span', { class: 'muted' }, 'Explore local eateries nearby')
       );
     card.append(h('div', { class: 'meals' }, meal('Lunch', day.meals.lunch), meal('Dinner', day.meals.dinner)));
     panel.append(card);
@@ -269,7 +327,12 @@ function renderItinerary(p) {
 }
 
 function renderSights(p) {
-  clear($('[data-panel="sights"]')).append(
+  const panel = clear($('[data-panel="sights"]'));
+  if (!p.attractions.length) {
+    panel.append(emptyWithLink('No sights found in map data for this place yet.', p.searchLinks.sights, 'Search attractions on Google Maps ↗'));
+    return;
+  }
+  panel.append(
     h(
       'div',
       { class: 'card-grid' },
@@ -277,7 +340,7 @@ function renderSights(p) {
         h(
           'article',
           { class: 'card glass' },
-          h('div', { class: 'row' }, h('span', { class: 'chip' }, a.category), h('span', { class: 'rating' }, stars(a.rating))),
+          h('div', { class: 'row' }, h('span', { class: 'chip' }, a.category), ratingBadge(a)),
           h('h3', {}, a.name),
           h('p', {}, a.blurb),
           h('div', { class: 'stop-meta' }, h('span', {}, `📍 ${a.area}`), h('span', {}, `🎟 ${a.fee}`)),
@@ -292,7 +355,7 @@ function renderSights(p) {
 function renderFood(p) {
   const panel = clear($('[data-panel="food"]'));
   if (!p.restaurants.length) {
-    panel.append(h('div', { class: 'empty glass' }, 'Restaurant picks are not available for this destination yet.'));
+    panel.append(emptyWithLink('No restaurants found in map data near the centre.', p.searchLinks.restaurants, 'Find restaurants on Google Maps ↗'));
     return;
   }
   panel.append(
@@ -303,11 +366,13 @@ function renderFood(p) {
         h(
           'article',
           { class: 'card glass' },
-          h('div', { class: 'row' }, h('span', { class: `chip ${r.tier === 'premium' ? 'gold' : ''}` }, TIER_LABEL[r.tier]), h('span', { class: 'rating' }, stars(r.rating))),
+          h('div', { class: 'row' }, h('span', { class: `chip ${r.tier === 'premium' ? 'gold' : ''}` }, TIER_LABEL[r.tier] || r.cuisine), ratingBadge(r)),
           h('h3', {}, r.name),
           h('p', {}, `${r.cuisine} · ${r.area}`),
-          h('p', {}, `Must try: ${r.mustTry}`),
-          h('div', { class: 'row' }, h('span', { class: 'price' }, money(r.costForTwo)), h('span', { class: 'muted' }, 'approx. for two')),
+          r.mustTry ? h('p', {}, `Must try: ${r.mustTry}`) : null,
+          r.costForTwo
+            ? h('div', { class: 'row' }, h('span', { class: 'price' }, money(r.costForTwo)), h('span', { class: 'muted' }, 'approx. for two'))
+            : h('div', { class: 'row' }, h('span', { class: 'muted' }, 'Prices vary — check the menu on Maps')),
           h('div', { class: 'links' }, mapLink(r.mapsUrl))
         )
       )
@@ -328,10 +393,10 @@ function renderStays(p) {
           h(
             'article',
             { class: 'card glass' },
-            h('div', { class: 'row' }, h('span', { class: 'chip' }, s.area), h('span', { class: 'rating' }, stars(s.rating))),
+            h('div', { class: 'row' }, h('span', { class: 'chip' }, s.area), ratingBadge(s)),
             h('h3', {}, s.name),
-            h('p', {}, s.highlights.join(' · ')),
-            h('div', { class: 'row' }, h('span', { class: 'price' }, `${money(s.pricePerNight[0])} – ${money(s.pricePerNight[1])}`), h('span', { class: 'muted' }, 'per night')),
+            s.highlights.length ? h('p', {}, s.highlights.join(' · ')) : null,
+            h('div', { class: 'row' }, h('span', { class: 'price' }, `${money(s.pricePerNight[0])} – ${money(s.pricePerNight[1])}`), h('span', { class: 'muted' }, s.priceIsTypical ? 'typical per night here' : 'per night')),
             h('div', { class: 'links' }, mapLink(s.mapsUrl))
           )
         )
@@ -343,7 +408,7 @@ function renderStays(p) {
     h('p', { class: 'disclaimer' }, h('a', { href: p.stays.bookingSearchUrl }, `Check live availability for ${p.destination.name} ↗`))
   );
   if (!panel.querySelector('.card')) {
-    panel.prepend(h('div', { class: 'empty glass' }, 'Stay suggestions are not available for this destination yet — use the live search link below.'));
+    panel.prepend(emptyWithLink('No hotels found in map data for this place yet.', p.searchLinks.stays, 'Find hotels on Google Maps ↗'));
   }
 }
 
@@ -357,7 +422,17 @@ function renderTransport(p) {
     ),
     h('div', { class: 'split' }, list('Public transport', p.transport.public, localItem), list('Private transport', p.transport.private, localItem)),
     p.dayTrips.length
-      ? list('Day trips nearby', p.dayTrips, (t) => h('li', {}, h('div', { class: 'row' }, h('strong', {}, t.name), h('span', { class: 'muted' }, `${t.distanceKm} km`)), h('small', {}, t.note)))
+      ? list('Day trips nearby', p.dayTrips, (t) =>
+          h(
+            'li',
+            {},
+            h('div', { class: 'row' }, h('strong', {}, t.name), h('span', { class: 'muted' }, `${t.distanceKm} km`)),
+            h('small', {}, t.note),
+            t.slug
+              ? h('div', {}, h('button', { type: 'button', class: 'btn btn-ghost btn-sm', onClick: () => (location.hash = `#/plan?${new URLSearchParams({ destination: t.slug, days: '2', travelers: String(p.params.travelers), budget: p.params.budget })}`) }, `Plan ${t.name} →`))
+              : null
+          )
+        )
       : null
   );
 }
@@ -644,6 +719,7 @@ async function boot() {
 
   try {
     const me = await api('/auth/me');
+    state.accountsEnabled = me.accountsEnabled !== false;
     setUser(me.user, me.csrfToken ?? null);
   } catch {
     setUser(null, null);

@@ -12,47 +12,48 @@ const sha256 = (v) => crypto.createHash('sha256').update(v).digest('hex');
  * cannot be used to hijack sessions. Sessions are revocable (logout, disable).
  */
 function createSessionStore(db, ttlMs) {
-  const insert = db.prepare(
-    'INSERT INTO sessions (token_hash, user_id, csrf_token, expires_at, created_at) VALUES (?, ?, ?, ?, ?)'
-  );
-  const find = db.prepare(`
-    SELECT s.csrf_token, s.expires_at, u.id, u.email, u.name, u.role, u.disabled
-    FROM sessions s JOIN users u ON u.id = s.user_id
-    WHERE s.token_hash = ?`);
-  const remove = db.prepare('DELETE FROM sessions WHERE token_hash = ?');
-  const removeForUser = db.prepare('DELETE FROM sessions WHERE user_id = ?');
-  const purge = db.prepare('DELETE FROM sessions WHERE expires_at < ?');
-
   return {
-    create(userId) {
+    async create(userId) {
       const token = crypto.randomBytes(32).toString('base64url');
       const csrf = crypto.randomBytes(32).toString('base64url');
       const now = Date.now();
-      insert.run(sha256(token), userId, csrf, now + ttlMs, now);
+      await db.run(
+        'INSERT INTO sessions (token_hash, user_id, csrf_token, expires_at, created_at) VALUES (?, ?, ?, ?, ?)',
+        sha256(token),
+        userId,
+        csrf,
+        now + ttlMs,
+        now
+      );
       return { token, csrf };
     },
-    lookup(token) {
+    async lookup(token) {
       if (typeof token !== 'string' || token.length < 20 || token.length > 100) return null;
       const hash = sha256(token);
-      const row = find.get(hash);
+      const row = await db.get(
+        `SELECT s.csrf_token, s.expires_at, u.id, u.email, u.name, u.role, u.disabled
+         FROM sessions s JOIN users u ON u.id = s.user_id
+         WHERE s.token_hash = ?`,
+        hash
+      );
       if (!row) return null;
       if (row.expires_at < Date.now() || row.disabled) {
-        remove.run(hash);
+        await db.run('DELETE FROM sessions WHERE token_hash = ?', hash);
         return null;
       }
       return {
         csrf: row.csrf_token,
-        user: { id: row.id, email: row.email, name: row.name, role: row.role },
+        user: { id: Number(row.id), email: row.email, name: row.name, role: row.role },
       };
     },
-    destroy(token) {
-      if (typeof token === 'string') remove.run(sha256(token));
+    async destroy(token) {
+      if (typeof token === 'string') await db.run('DELETE FROM sessions WHERE token_hash = ?', sha256(token));
     },
-    destroyAllForUser(userId) {
-      removeForUser.run(userId);
+    async destroyAllForUser(userId) {
+      await db.run('DELETE FROM sessions WHERE user_id = ?', userId);
     },
-    purgeExpired() {
-      purge.run(Date.now());
+    async purgeExpired() {
+      await db.run('DELETE FROM sessions WHERE expires_at < ?', Date.now());
     },
   };
 }

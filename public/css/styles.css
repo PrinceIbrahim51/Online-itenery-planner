@@ -619,6 +619,14 @@ select:focus {
   border-bottom-color: var(--gold);
 }
 
+.banner {
+  margin: 14px 0 0;
+  padding: 14px 18px;
+  border-color: rgba(255, 196, 120, 0.4);
+  color: var(--text-2);
+  font-size: 0.92rem;
+}
+
 /* Itinerary timeline */
 .day {
   padding: 24px 26px;

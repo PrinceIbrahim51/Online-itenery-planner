@@ -29,7 +29,7 @@ test('security headers are set and fingerprinting header removed', async () => {
   assert.match(csp, /frame-ancestors 'none'/);
   assert.match(csp, /object-src 'none'/);
   assert.equal(r.headers.get('x-content-type-options'), 'nosniff');
-  assert.equal(r.headers.get('x-frame-options'), 'SAMEORIGIN');
+  assert.equal(r.headers.get('x-frame-options'), 'DENY');
   assert.ok(r.headers.get('referrer-policy'));
   assert.ok(r.headers.get('permissions-policy'));
   assert.equal(r.headers.get('x-powered-by'), null);
@@ -55,7 +55,7 @@ test('passwords are hashed with salted scrypt and verified in constant time', as
 
 test('database never stores plaintext passwords; admin API never returns hashes', async () => {
   await registered('hashcheck@example.com');
-  const row = srv.db.prepare('SELECT password_hash FROM users WHERE email = ?').get('hashcheck@example.com');
+  const row = (await srv.db.get('SELECT password_hash FROM users WHERE email = ?', 'hashcheck@example.com'));
   assert.ok(row.password_hash.startsWith('scrypt$'));
   assert.ok(!row.password_hash.includes(PW));
 });
@@ -88,7 +88,7 @@ test('session cookie is HttpOnly + SameSite=Strict and the token is stored hashe
   assert.match(set, /HttpOnly/i);
   assert.match(set, /SameSite=Strict/i);
   const token = set.split(';')[0].split('=')[1];
-  const raw = srv.db.prepare('SELECT COUNT(*) AS n FROM sessions WHERE token_hash = ?').get(token);
+  const raw = (await srv.db.get('SELECT COUNT(*) AS n FROM sessions WHERE token_hash = ?', token));
   assert.equal(raw.n, 0, 'raw token must not be stored');
 });
 
@@ -133,7 +133,7 @@ test('admin routes: 401 anonymous, 403 for normal users, 200 for admins', async 
   assert.equal((await user.req('/api/admin/users')).status, 403);
 
   const admin = await registered('boss@example.com');
-  srv.db.prepare("UPDATE users SET role = 'admin' WHERE email = ?").run('boss@example.com');
+  await srv.db.run("UPDATE users SET role = 'admin' WHERE email = ?", 'boss@example.com');
   const stats = await admin.req('/api/admin/stats');
   assert.equal(stats.status, 200);
   const users = await admin.req('/api/admin/users');
@@ -141,7 +141,7 @@ test('admin routes: 401 anonymous, 403 for normal users, 200 for admins', async 
   assert.ok(users.json.users.every((u) => !('password_hash' in u)));
 
   // Disabling a user revokes their sessions immediately.
-  const victimId = srv.db.prepare('SELECT id FROM users WHERE email = ?').get('user-not-admin@example.com').id;
+  const victimId = (await srv.db.get('SELECT id FROM users WHERE email = ?', 'user-not-admin@example.com')).id;
   const patch = await admin.req(`/api/admin/users/${victimId}`, { method: 'PATCH', body: { disabled: true }, headers: { 'X-CSRF-Token': admin.csrf } });
   assert.equal(patch.status, 200);
   assert.equal((await user.req('/api/trips')).status, 401);

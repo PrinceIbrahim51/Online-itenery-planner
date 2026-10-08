@@ -23,8 +23,8 @@ server.requestTimeout = 30_000;
 server.keepAliveTimeout = 5_000;
 
 function shutdown() {
-  server.close(() => {
-    db.close();
+  server.close(async () => {
+    await db?.close();
     process.exit(0);
   });
   setTimeout(() => process.exit(1), 10_000).unref();

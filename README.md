@@ -10,8 +10,13 @@ Pick a destination and the number of days. Voyagr builds a day-by-day itinerary 
 - **Trip cost estimate**: stay, food, local transport and entry fees
 - **Accounts**: you can save trips, and there is an **admin console** for user management and security events
 
-Featured destinations: Delhi, Mumbai, Goa, Jaipur, Agra, Udaipur, Varanasi and Hyderabad.
-To plan *any* other city, set an optional `OPENTRIPMAP_API_KEY`. The server uses it to look up places and never sends it to the browser.
+**Every city and town in India.** You can search 3,472 places across all 36 states and union territories: every GeoNames settlement with 1,000+ people, plus popular tourist towns such as Gulmarg, Khajuraho and Havelock.
+- **Featured guides** (Delhi, Mumbai, Goa, Jaipur, Agra, Udaipur, Varanasi, Hyderabad) are hand-curated, with ratings, prices and must-try dishes.
+- **Every other city** is planned with **live OpenStreetMap data** fetched on the server: sights, restaurants, hotels, railway stations and bus stands. On top of that come the nearest airports (from a bundled dataset), city-sized cost, fare and stay-price profiles, local transport and nearby day trips. No API key is needed.
+- Live places never get invented ratings or prices. Notable places are marked "✦ Notable" (they have a Wikipedia/Wikidata entry), and stay prices are labelled as typical ranges for the city.
+- If OpenStreetMap is unreachable, the plan still loads with transport, fares and costs, plus links to search the city on Google Maps.
+
+An optional `OPENTRIPMAP_API_KEY` adds places **outside** India. It is used only on the server and never sent to the browser.
 
 > Fares, prices and timings are indicative estimates. Ride-hailing apps don't publish pricing APIs, so fares come from published rate cards and are shown as a range from normal to peak pricing.
 
@@ -19,7 +24,9 @@ To plan *any* other city, set an optional `OPENTRIPMAP_API_KEY`. The server uses
 
 - **Backend**: Node.js 22 + Express 5, built-in `node:sqlite` (no native build step), zod validation
 - **Frontend**: dependency-free HTML/CSS/ES modules with a midnight-navy and champagne-gold theme, served under a strict Content-Security-Policy
-- **Runtime dependencies** (6): `express`, `helmet`, `cors`, `express-rate-limit`, `cookie-parser`, `zod`
+- **Database**: PostgreSQL in production (`DATABASE_URL`, for example Neon from Vercel's Storage tab), SQLite locally
+- **Runtime dependencies** (7): `express`, `helmet`, `cors`, `express-rate-limit`, `cookie-parser`, `zod`, `pg`
+- **Data**: GeoNames (CC BY 4.0), OurAirports (public domain), © OpenStreetMap contributors (ODbL). Regenerate the bundled city and airport files with `scripts/build-india-data.js`.
 
 ## Getting started
 
@@ -44,6 +51,21 @@ NODE_ENV=production npm start   # must be served over HTTPS (behind a TLS proxy)
 ```
 
 Set `TRUST_PROXY=1` when running behind one reverse proxy (Nginx, Render, Heroku, and so on) so that rate limiting sees real client IPs.
+
+## Deploying to Vercel
+
+The repo is ready for Vercel as is:
+- `api/index.js` runs the Express API as one serverless function, in the Mumbai region (`bom1`).
+- Vercel's CDN serves `public/`, and `vercel.json` applies the same security headers there (CSP, HSTS and so on).
+- `.vercelignore` keeps `.env`, databases and tests out of uploads.
+
+**Turn on accounts** (sign-up, saved trips, admin): Vercel's filesystem is temporary, so accounts need a real database.
+1. In the Vercel project, open **Storage**, then **Create Database**, then choose **Neon (Postgres)**. Connect it to the project; this adds `DATABASE_URL`.
+2. Redeploy. The tables are created automatically on first use.
+3. Create your admin from your machine:
+   `DATABASE_URL='postgres://…' ADMIN_EMAIL=… ADMIN_PASSWORD='…' npm run create-admin`
+
+Until `DATABASE_URL` is set, the planner works fully and the sign-in buttons are hidden. Account endpoints answer `503`.
 
 ## Scripts
 

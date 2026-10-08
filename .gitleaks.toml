@@ -8,5 +8,5 @@ description = "Template and scanner files contain only placeholders / patterns"
 paths = [
   '''\.env\.example$''',
   '''scripts/scan-secrets\.js$''',
-  '''test/security\.test\.js$''',
+  '''test/(security|india)\.test\.js$''',
 ]

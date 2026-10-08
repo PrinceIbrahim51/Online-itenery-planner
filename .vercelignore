@@ -1,0 +1,12 @@
+# Never upload local secrets, databases or dev-only files to Vercel
+.env
+.env.*
+!.env.example
+/data/
+*.db
+*.db-*
+*.sqlite*
+node_modules/
+test/
+coverage/
+.github/
