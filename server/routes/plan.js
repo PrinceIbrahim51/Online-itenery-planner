@@ -56,40 +56,45 @@ function planRouter({ openTripMap, overpass, wikipedia, logger, planLimiter = (_
 
     const city = india.getCity(key);
     if (city) {
-      let places = EMPTY_PLACES();
-      if (overpass) {
-        try {
-          places = { ...EMPTY_PLACES(), ...(await overpass.placesAround(city.slug, city.lat, city.lng, india.searchRadius(city))) };
-        } catch (err) {
-          places = { ...EMPTY_PLACES(), failed: ['sights', 'food', 'hubs'], issue: 'error' };
-        }
-        if (places.failed.length) logger.warn(`Live places partly failed for ${city.slug}: ${places.failed.join(',')} (${places.issue})`);
-      } else {
-        places.failed = ['sights', 'food', 'hubs'];
-        places.issue = 'disabled';
+      // OpenStreetMap and Wikipedia are queried in parallel; each covers for the other.
+      const [osmResult, wikiResult] = await Promise.allSettled([
+        overpass
+          ? overpass.placesAround(city.slug, city.lat, city.lng, india.searchRadius(city))
+          : Promise.reject(Object.assign(new Error('disabled'), { code: 'disabled' })),
+        wikipedia ? wikipedia.placesAround(city.slug, city.lat, city.lng) : Promise.resolve({ sights: [], rail: [] }),
+      ]);
+
+      const places =
+        osmResult.status === 'fulfilled'
+          ? { ...EMPTY_PLACES(), ...osmResult.value }
+          : { ...EMPTY_PLACES(), failed: ['sights', 'food', 'hubs'], issue: osmResult.reason?.code || 'error' };
+      if (places.failed.length) {
+        logger.warn(`Live places partly failed for ${city.slug}: ${(places.diagnostics || places.failed).join(' | ')}`);
       }
 
-      // Too few sights (or none)? Top up from Wikipedia — an independent source.
-      let sightsSource = places.sights.length ? 'openstreetmap' : null;
-      if (wikipedia && places.sights.length < 4) {
-        try {
-          const known = new Set(places.sights.map((s) => s.name.toLowerCase()));
-          const extra = (await wikipedia.sightsAround(city.slug, city.lat, city.lng)).filter((s) => !known.has(s.name.toLowerCase()));
-          if (extra.length) {
-            places.sights = [...places.sights, ...extra];
-            sightsSource = sightsSource ? 'mixed' : 'wikipedia';
-          }
-        } catch (err) {
-          logger.warn(`Wikipedia fallback failed for ${city.slug}: ${err.message}`);
-        }
-      }
+      const wiki = wikiResult.status === 'fulfilled' ? wikiResult.value : { sights: [], rail: [] };
+      if (wikiResult.status === 'rejected') logger.warn(`Wikipedia failed for ${city.slug}: ${wikiResult.reason?.message}`);
+
+      const known = new Set(places.sights.map((x) => x.name.toLowerCase()));
+      const extraSights = wiki.sights.filter((x) => !known.has(x.name.toLowerCase()));
+      const osmSights = places.sights.length;
+      places.sights = [...places.sights, ...extraSights];
+      if (!places.rail.length && wiki.rail.length) places.rail = wiki.rail;
+
+      // Only tell the user about gaps they can actually see.
+      const missing = [];
+      if (places.sights.length < 3) missing.push('sights');
+      if (places.failed.includes('food')) missing.push('food');
+      if (places.failed.includes('hubs') && !places.rail.length) missing.push('hubs');
 
       const dest = india.toDestination(city, places, curatedSlugs);
       dest.degraded = places.sights.length === 0;
-      dest.liveStatus = dest.degraded ? 'unavailable' : places.failed.length ? 'partial' : 'ok';
-      dest.liveIssue = places.issue;
-      dest.failedParts = places.failed;
-      dest.sightsSource = sightsSource;
+      dest.liveStatus = dest.degraded ? 'unavailable' : missing.length ? 'partial' : 'ok';
+      dest.liveIssue = missing.length ? places.issue : null;
+      dest.failedParts = missing;
+      dest.sightsSource = osmSights && extraSights.length ? 'mixed' : osmSights ? 'openstreetmap' : extraSights.length ? 'wikipedia' : null;
+      // Anything that failed (even if covered) means a retry could improve the plan.
+      dest.complete = places.failed.length === 0 && wikiResult.status === 'fulfilled';
       return dest;
     }
 
@@ -123,7 +128,8 @@ function planRouter({ openTripMap, overpass, wikipedia, logger, planLimiter = (_
     plan.destination.failedParts = dest.failedParts || [];
     plan.destination.sightsSource = dest.sightsSource || null;
     // Only let the CDN cache complete plans; partial ones should retry soon.
-    res.set('Cache-Control', plan.destination.liveStatus === 'ok' ? PUBLIC_CACHE : 'no-store');
+    const cacheable = plan.destination.liveStatus === 'ok' && dest.complete !== false;
+    res.set('Cache-Control', cacheable ? PUBLIC_CACHE : 'public, max-age=0, s-maxage=60');
     res.json(plan);
   });
 

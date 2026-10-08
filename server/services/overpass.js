@@ -52,11 +52,11 @@ function buildQueries(lat, lng, radius) {
   return {
     sights: `${head}
 (
-  nwr(around:${r},${c})["tourism"~"^(attraction|museum|viewpoint|zoo|theme_park|gallery|aquarium)$"]["name"];
-  nwr(around:${r},${c})["historic"~"^(monument|fort|castle|memorial|ruins|palace|archaeological_site|temple|city_gate)$"]["name"];
-  nwr(around:${r},${c})["amenity"="place_of_worship"]["name"]["wikidata"];
-  nwr(around:${r},${c})["leisure"~"^(park|garden|nature_reserve)$"]["name"]["wikidata"];
-  nwr(around:${wide},${c})["natural"~"^(beach|waterfall)$"]["name"];
+  nw(around:${r},${c})["tourism"~"^(attraction|museum|viewpoint|zoo|theme_park|gallery|aquarium)$"]["name"];
+  nw(around:${r},${c})["historic"~"^(monument|fort|castle|memorial|ruins|palace|archaeological_site|temple|city_gate)$"]["name"];
+  nw(around:${r},${c})["amenity"="place_of_worship"]["name"]["wikidata"];
+  nw(around:${r},${c})["leisure"~"^(park|garden|nature_reserve)$"]["name"]["wikidata"];
+  nw(around:${wide},${c})["natural"~"^(beach|waterfall)$"]["name"];
 );
 out tags center 160;`,
     food: `${head}
@@ -159,19 +159,24 @@ function createOverpass({ fetchImpl = fetch, endpoints = ENDPOINTS, logger } = {
     return parsed.data.elements;
   }
 
-  /** Try each endpoint in turn, starting at a different one per part to spread load. */
+  /** Try every endpoint in turn (starting at a different one per part to spread load). */
   async function query(body, offset) {
+    const attempts = [];
     let lastErr;
-    for (let i = 0; i < Math.min(endpoints.length, 2); i++) {
+    for (let i = 0; i < endpoints.length; i++) {
       const url = endpoints[(offset + i) % endpoints.length];
       try {
         return await queryOnce(url, body);
       } catch (err) {
         lastErr = err;
-        logger?.warn(`Overpass failed (${new URL(url).host}): ${issueCode(err)} ${err.message}`);
+        const host = new URL(url).host;
+        attempts.push(`${host}:${issueCode(err)}`);
+        logger?.warn(`Overpass failed (${host}): ${issueCode(err)} ${err.message}`);
       }
     }
-    throw lastErr || new Error('Overpass unavailable');
+    const err = lastErr || new Error('Overpass unavailable');
+    err.attempts = attempts;
+    throw err;
   }
 
   async function fetchAll(lat, lng, radius) {
@@ -179,6 +184,7 @@ function createOverpass({ fetchImpl = fetch, endpoints = ENDPOINTS, logger } = {
     const settled = await Promise.allSettled(PARTS.map((p, i) => query(queries[p], i)));
     const merged = { sights: [], food: [], stays: [], rail: [], bus: [] };
     const failed = [];
+    const diagnostics = [];
     let issue = null;
     const seen = new Set();
     settled.forEach((r, i) => {
@@ -196,9 +202,10 @@ function createOverpass({ fetchImpl = fetch, endpoints = ENDPOINTS, logger } = {
       } else {
         failed.push(PARTS[i]);
         issue ??= issueCode(r.reason);
+        diagnostics.push(`${PARTS[i]}→${(r.reason?.attempts || []).join(',')}`);
       }
     });
-    return { ...merged, failed, issue };
+    return { ...merged, failed, issue, diagnostics };
   }
 
   /** Returns { sights, food, stays, rail, bus, failed[], issue } — never throws. */

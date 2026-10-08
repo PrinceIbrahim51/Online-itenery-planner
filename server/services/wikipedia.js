@@ -20,6 +20,8 @@ const SIGHT_WORDS =
 const EXCLUDE =
   /\b(school|college|university|institute|hospital|railway station|metro station|bus station|airport|constituency|ward|village|district|taluk|mandal|tehsil|company|bank|stadium|cricket|film|election|police|office|neighbourhood|neighborhood|locality|suburb|road|street|highway|flyover)\b/i;
 
+const RAIL = /\b(railway station|railway junction|junction railway|rail station|railway terminus|terminal railway)\b/i;
+
 const pageSchema = z.object({
   title: z.string(),
   description: z.string().optional(),
@@ -42,7 +44,8 @@ function categoryFor(text) {
 function createWikipedia({ fetchImpl = fetch, logger } = {}) {
   const cache = new Map();
 
-  async function sightsAround(key, lat, lng) {
+  /** Returns { sights, rail } near a point. */
+  async function placesAround(key, lat, lng) {
     const hit = cache.get(key);
     if (hit && hit.expires > Date.now()) return hit.value;
 
@@ -54,8 +57,9 @@ function createWikipedia({ fetchImpl = fetch, logger } = {}) {
       generator: 'geosearch',
       ggscoord: `${Number(lat).toFixed(5)}|${Number(lng).toFixed(5)}`,
       ggsradius: '10000',
-      ggslimit: '80',
+      ggslimit: '100',
       prop: 'coordinates|description',
+      colimit: 'max', // default is 10 — without this most pages come back with no coordinates
     };
     if (!Number.isFinite(Number(lat)) || !Number.isFinite(Number(lng))) throw new Error('Invalid coordinate');
     for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
@@ -72,14 +76,19 @@ function createWikipedia({ fetchImpl = fetch, logger } = {}) {
     if (!parsed.success) throw new Error('Unexpected Wikipedia response');
 
     const sights = [];
+    const rail = [];
     for (const raw of parsed.data.query?.pages ?? []) {
       const p = pageSchema.safeParse(raw);
       if (!p.success || !p.data.coordinates?.length) continue;
       const title = cleanText(p.data.title).slice(0, 90);
       const description = p.data.description ? cleanText(p.data.description).slice(0, 160) : '';
       const haystack = `${title} ${description}`;
-      if (!SIGHT_WORDS.test(haystack) || EXCLUDE.test(haystack)) continue;
       const { lat: plat, lon: plng } = p.data.coordinates[0];
+      if (RAIL.test(haystack) && !/metro|monorail|light rail/i.test(haystack)) {
+        rail.push({ name: title.replace(/\s+railway station$/i, '').trim(), lat: plat, lng: plng, notable: true, hours: null, tags: {} });
+        continue;
+      }
+      if (!SIGHT_WORDS.test(haystack) || EXCLUDE.test(haystack)) continue;
       sights.push({
         name: title,
         lat: plat,
@@ -90,13 +99,13 @@ function createWikipedia({ fetchImpl = fetch, logger } = {}) {
         tags: { description: description ? `${description.charAt(0).toUpperCase()}${description.slice(1)}.` : null },
       });
     }
-    logger?.info?.(`Wikipedia fallback: ${sights.length} sights for ${key}`);
+    const value = { sights, rail };
     if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value);
-    cache.set(key, { value: sights, expires: Date.now() + CACHE_TTL });
-    return sights;
+    cache.set(key, { value, expires: Date.now() + CACHE_TTL });
+    return value;
   }
 
-  return { sightsAround };
+  return { placesAround };
 }
 
 module.exports = { createWikipedia, categoryFor };

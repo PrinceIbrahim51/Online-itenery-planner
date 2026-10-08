@@ -266,11 +266,11 @@ function renderPlan(p) {
       ' or try again in a minute.'
     );
   } else if (status === 'partial') {
-    const missing = (d.failedParts || []).map((x) => ({ sights: 'some sights', food: 'restaurants & hotels', hubs: 'station details' })[x]).filter(Boolean);
+    const missing = (d.failedParts || []).map((x) => ({ sights: 'sights', food: 'restaurants & hotels', hubs: 'station details' })[x]).filter(Boolean);
     clear(banner).append(
       `Some live data didn’t load${missing.length ? ` (${missing.join(', ')})` : ''}${reason} — showing everything we could get. `,
-      d.failedParts?.includes('food') ? h('a', { href: p.searchLinks.restaurants }, 'Restaurants on Google Maps ↗') : null,
-      ' Refresh in a minute for the full plan.'
+      ...(d.failedParts?.includes('food') ? [h('a', { href: p.searchLinks.restaurants }, 'Restaurants on Google Maps ↗'), ' · '] : []),
+      'Refresh in a minute for the full plan.'
     );
   }
 

@@ -124,6 +124,8 @@ test('Wikipedia fallback keeps real sights and drops schools, stations and wards
     { title: 'Chennai Central', description: 'railway station in Chennai', coordinates: [{ lat: 13.08, lon: 80.27 }] },
     { title: 'Presidency College', description: 'college in Chennai', coordinates: [{ lat: 13.06, lon: 80.28 }] },
     { title: 'Ward 120 <script>', description: 'temple ward', coordinates: [{ lat: 13.06, lon: 80.28 }] },
+    { title: 'Chennai Egmore railway station', description: 'railway station in Chennai', coordinates: [{ lat: 13.07, lon: 80.26 }] },
+    { title: 'Guindy metro station', description: 'metro station in Chennai', coordinates: [{ lat: 13.0, lon: 80.2 }] },
     { title: 'No coords temple' },
   ];
   let requested;
@@ -133,9 +135,11 @@ test('Wikipedia fallback keeps real sights and drops schools, stations and wards
       return { ok: true, text: async () => JSON.stringify({ query: { pages } }) };
     },
   });
-  const sights = await wiki.sightsAround('chennai', 13.0827, 80.2707);
+  const { sights, rail } = await wiki.placesAround('chennai', 13.0827, 80.2707);
   assert.equal(requested.hostname, 'en.wikipedia.org');
   assert.equal(requested.searchParams.get('ggscoord'), '13.08270|80.27070');
+  assert.equal(requested.searchParams.get('colimit'), 'max', 'otherwise only 10 pages get coordinates');
+  assert.deepEqual(rail.map((r) => r.name).sort(), ['Chennai Central', 'Chennai Egmore'], 'metro excluded');
   assert.deepEqual(sights.map((s) => s.name).sort(), ['Fort St. George', 'Kapaleeshwarar Temple', 'Marina Beach']);
   assert.equal(sights.find((s) => s.name === 'Marina Beach').wikiCategory, 'Beach');
 });
@@ -196,7 +200,7 @@ test('API: any Indian city plans with live data; failures degrade gracefully', a
     assert.equal(plan.status, 200);
     assert.equal(plan.json.destination.degraded, true);
     assert.equal(plan.json.destination.liveStatus, 'unavailable');
-    assert.equal(plan.headers.get('cache-control'), 'no-store');
+    assert.match(plan.headers.get('cache-control'), /s-maxage=60/);
   } finally {
     await down.close();
   }
@@ -206,7 +210,7 @@ test('API: any Indian city plans with live data; failures degrade gracefully', a
     {},
     {
       overpass: { placesAround: async () => ({ sights: [], food: [], stays: [], rail: [], bus: [], failed: ['sights', 'food', 'hubs'], issue: 'timeout' }) },
-      wikipedia: { sightsAround: async () => FAKE_PLACES.sights.map((s) => ({ ...s, wikiCategory: 'Heritage' })) },
+      wikipedia: { placesAround: async () => ({ sights: FAKE_PLACES.sights.map((s) => ({ ...s, wikiCategory: 'Heritage' })), rail: [] }) },
     }
   );
   try {
@@ -214,11 +218,28 @@ test('API: any Indian city plans with live data; failures degrade gracefully', a
     assert.equal(plan.status, 200);
     assert.equal(plan.json.destination.degraded, false);
     assert.equal(plan.json.destination.liveStatus, 'partial');
+    assert.deepEqual(plan.json.destination.failedParts, ['food', 'hubs'], 'sights were covered, so not reported');
     assert.equal(plan.json.destination.sightsSource, 'wikipedia');
     assert.ok(plan.json.itinerary[0].stops.length > 0, 'day 1 has real stops');
-    assert.equal(plan.headers.get('cache-control'), 'no-store');
+    assert.match(plan.headers.get('cache-control'), /s-maxage=60/);
   } finally {
     await rescued.close();
+  }
+
+  // Overpass sights + hubs fail, but Wikipedia covers both → no gaps to report.
+  const covered = await startServer(
+    {},
+    {
+      overpass: { placesAround: async () => ({ ...FAKE_PLACES, sights: [], rail: [], bus: [], failed: ['sights', 'hubs'], issue: 'http_500' }) },
+      wikipedia: { placesAround: async () => ({ sights: FAKE_PLACES.sights, rail: [{ name: 'Leh', lat: 34.1, lng: 77.5, notable: true, hours: null, tags: {} }] }) },
+    }
+  );
+  try {
+    const plan = await client(covered.base).req('/api/plan?destination=leh&days=2');
+    assert.equal(plan.json.destination.liveStatus, 'ok');
+    assert.ok(plan.json.transport.reach.some((r) => r.mode === 'Train' && r.hub === 'Leh'));
+  } finally {
+    await covered.close();
   }
 });
 
