@@ -2,7 +2,10 @@
 
 const cities = require('../data/india-cities.json');
 const airports = require('../data/india-airports.json');
+const districts = require('../data/india-districts.json');
+const states = require('../data/india-states.json');
 const { haversineKm } = require('./geo');
+const { fold, soundKey, distance, tolerance } = require('./fuzzy');
 
 /**
  * Every Indian city/town (GeoNames, pop ≥ 1,000, plus popular tourist towns):
@@ -11,42 +14,168 @@ const { haversineKm } = require('./geo');
  * © OpenStreetMap contributors (ODbL).
  */
 const bySlug = new Map(cities.map((c) => [c.slug, c]));
+const districtsBySlug = new Map(districts.map((d) => [d.slug, d]));
+const statesBySlug = new Map(states.map((st) => [st.slug, st]));
+const statesByCode = new Map(states.map((st) => [st.code, st]));
 
-const fold = (s) =>
-  String(s)
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim();
+// District HQ towns that share the district's name get the district as an alias
+// (one "Tirunelveli" entry, not two); other districts are searchable on their own.
+const hqOf = new Map();
+for (const d of districts) {
+  if (d.sameAsHub && d.hub) hqOf.set(d.hub, d);
+}
 
-const index = cities.map((c) => ({ c, keys: [c.name, ...(c.aka || [])].map(fold) }));
+// ---------------------------------------------------------------------------
+// Unified, typo-tolerant search over states, districts and cities
+// ---------------------------------------------------------------------------
+const entry = (type, slug, name, state, aliases, pop, extra = {}) => {
+  const names = [name, ...aliases];
+  return { type, slug, name, state, pop, keys: names.map(fold), sounds: names.map(soundKey), ...extra };
+};
+const index = [
+  ...states.map((st) => entry('state', st.slug, st.name, st.name, st.aka || [], 1e9, { code: st.code })),
+  ...districts
+    .filter((d) => !d.sameAsHub)
+    .map((d) => entry('district', d.slug, d.name, d.state, [], (d.hub && bySlug.get(d.hub)?.pop) || 50000)),
+  ...cities.map((c) => {
+    const hq = hqOf.get(c.slug);
+    const aliases = [...(c.aka || []), ...(hq && hq.name !== c.name ? [hq.name] : [])];
+    return entry('city', c.slug, c.name, c.state, aliases, c.pop, { hq: Boolean(hq) });
+  }),
+];
+
+/** Adds hand-curated guides that are not towns in the dataset (e.g. "Goa"). */
+function registerFeatured(list) {
+  for (const d of list) {
+    if (bySlug.has(d.slug) || index.some((e) => e.slug === d.slug)) continue;
+    index.push(entry('city', d.slug, d.name, d.region, [], 2e6));
+  }
+}
 
 // Tourist favourites that share a name with a larger, lesser-known place.
-const BOOST = new Set(['manali-hp', 'srinagar', 'aurangabad']);
+const BOOST = new Set(['manali-hp', 'srinagar', 'aurangabad', 'chhatrapati-sambhajinagar']);
 
-function searchCities(query, limit = 12, curatedSlugs = new Set()) {
-  const q = fold(query);
-  if (!q) return [];
-  const scored = [];
-  for (const { c, keys } of index) {
-    let score = -1;
-    for (const k of keys) {
-      if (k === q) score = Math.max(score, 3);
-      else if (k.startsWith(q)) score = Math.max(score, 2);
-      else if (k.includes(` ${q}`)) score = Math.max(score, 1.5);
-      else if (q.length >= 3 && k.includes(q)) score = Math.max(score, 1);
+function scoreEntry(e, q, qs) {
+  let best = -1;
+  const tol = tolerance(qs.length);
+  for (let i = 0; i < e.keys.length; i++) {
+    const k = e.keys[i];
+    const sk = e.sounds[i];
+    let sc = -1;
+    if (k === q) sc = 100;
+    else if (k.startsWith(q)) sc = 80;
+    else if (sk === qs) sc = 76;
+    else if (qs.length >= 3 && sk.startsWith(qs)) sc = 66;
+    else if (k.includes(` ${q}`)) sc = 55;
+    else if (q.length >= 4 && k.includes(q)) sc = 42;
+    else if (tol > 0) {
+      const full = distance(qs, sk, tol);
+      const prefix = sk.length > qs.length ? distance(qs, sk.slice(0, qs.length), tol) : full;
+      if (full <= tol) sc = 52 - full * 10;
+      else if (prefix <= tol) sc = 46 - prefix * 10;
     }
-    if (score < 0) continue;
-    if (curatedSlugs.has(c.slug)) score += 0.6;
-    if (BOOST.has(c.slug)) score += 0.5;
-    scored.push({ c, score });
+    if (sc >= 0 && i > 0) sc -= 8; // official name beats an alias / old name
+    if (sc > best) best = sc;
   }
-  scored.sort((a, b) => b.score - a.score || b.c.pop - a.c.pop);
-  return scored.slice(0, limit).map(({ c }) => ({ slug: c.slug, name: c.name, state: c.state, curated: curatedSlugs.has(c.slug) }));
+  return best;
+}
+
+/**
+ * Search states, districts and cities. Results carry a `type` and a short `hint`.
+ * `exact` is false when the best match needed typo correction ("did you mean").
+ */
+function search(query, limit = 10, curatedSlugs = new Set()) {
+  const q = fold(query);
+  const qs = soundKey(query);
+  if (!q || !qs) return { results: [], exact: false };
+  const scored = [];
+  for (const e of index) {
+    let sc = scoreEntry(e, q, qs);
+    if (sc < 0) continue;
+    if (e.type === 'district') sc += 2;
+    if (curatedSlugs.has(e.slug)) sc += 6;
+    if (BOOST.has(e.slug)) sc += 5;
+    if (e.hq) sc += 2;
+    sc += e.type === 'state' ? 10 : Math.log10(Math.max(e.pop, 1000)) * 1.2;
+    scored.push({ e, sc });
+  }
+  scored.sort((a, b) => b.sc - a.sc);
+  const top = scored.slice(0, limit);
+  const results = top.map(({ e }) => {
+    let hint;
+    if (e.type === 'state') hint = `State · ${districtsByState.get(e.name)?.length ?? 0} districts`;
+    else if (e.type === 'district') hint = `District · ${e.state}`;
+    else if (curatedSlugs.has(e.slug)) hint = `Featured guide · ${e.state}`;
+    else hint = `${e.hq ? 'District HQ · ' : ''}${e.state}`;
+    return { slug: e.slug, name: e.name, state: e.state, type: e.type, code: e.code, hint, curated: curatedSlugs.has(e.slug) };
+  });
+  const exact = top.length > 0 && scoreEntry(top[0].e, q, qs) >= 66;
+  return { results, exact };
+}
+
+/** Back-compat helper used by older callers/tests. */
+function searchCities(query, limit = 12, curatedSlugs = new Set()) {
+  return search(query, limit, curatedSlugs).results;
 }
 
 const getCity = (slug) => bySlug.get(slug) || null;
+
+const districtsByState = new Map();
+for (const d of districts) {
+  const list = districtsByState.get(d.state) || [];
+  list.push(d);
+  districtsByState.set(d.state, list);
+}
+
+/** A district as a plannable place: centred on its HQ when the HQ shares its name, else on the district itself. */
+function getDistrict(slug) {
+  const d = districtsBySlug.get(slug);
+  if (!d) return null;
+  const hub = d.hub ? bySlug.get(d.hub) : null;
+  return {
+    slug: d.slug,
+    name: `${d.name} district`,
+    state: d.state,
+    lat: d.sameAsHub && hub ? hub.lat : d.lat,
+    lng: d.sameAsHub && hub ? hub.lng : d.lng,
+    pop: Math.max(hub?.pop ?? 0, 150000),
+    isDistrict: true,
+    hubName: hub?.name ?? null,
+    hubIsHq: Boolean(d.sameAsHub && hub),
+  };
+}
+
+/** A state overview: its capital plus every district (linking to the best plannable slug). */
+function getState(codeOrSlug) {
+  const st = statesByCode.get(String(codeOrSlug).toUpperCase()) || statesBySlug.get(codeOrSlug);
+  if (!st) return null;
+  const list = (districtsByState.get(st.name) || []).map((d) => {
+    const hub = d.hub ? bySlug.get(d.hub) : null;
+    return {
+      name: d.name,
+      slug: d.sameAsHub && hub ? hub.slug : d.slug,
+      hq: hub?.name ?? null,
+    };
+  });
+  const topCities = cities
+    .filter((c) => c.state === st.name)
+    .sort((a, b) => b.pop - a.pop)
+    .slice(0, 12)
+    .map((c) => ({ slug: c.slug, name: c.name }));
+  const capital = st.capital ? bySlug.get(st.capital) : null;
+  return {
+    code: st.code,
+    slug: st.slug,
+    name: st.name,
+    capital: capital ? { slug: capital.slug, name: capital.name } : null,
+    districts: list,
+    topCities,
+    totalPlaces: cities.filter((c) => c.state === st.name).length,
+  };
+}
+
+const getStateBySlug = (slug) => statesBySlug.get(slug) || null;
+const listStates = () => states.map((st) => ({ code: st.code, name: st.name })).sort((a, b) => a.name.localeCompare(b.name));
 
 // ----------------------------------------------------------------------------
 // City profile helpers
@@ -261,7 +390,11 @@ function toDestination(city, places, curatedSlugs = new Set()) {
     slug: city.slug,
     name: city.name,
     region: city.state,
-    tagline: tier === 'small' ? `A charming town in ${city.state}` : `${city.state} · population ${fmtPop(city.pop)}`,
+    tagline: city.isDistrict
+      ? `District of ${city.state}${city.hubName ? ` · ${city.hubIsHq ? 'headquarters' : 'nearest major town'} ${city.hubName}` : ''}`
+      : tier === 'small'
+        ? `A charming town in ${city.state}`
+        : `${city.state} · population ${fmtPop(city.pop)}`,
     bestTime: BEST_TIME[city.state] || (NORTH_EAST.has(city.state) ? 'October – April' : 'October – March'),
     center: [city.lat, city.lng],
     avgSpeedKmh: SPEED[tier],
@@ -284,4 +417,19 @@ function searchRadius(city) {
   return { metro: 9000, large: 7000, mid: 5000, small: 4000 }[tierOf(city.pop)];
 }
 
-module.exports = { searchCities, getCity, toDestination, searchRadius, tierOf, totalCities: cities.length };
+module.exports = {
+  search,
+  searchCities,
+  registerFeatured,
+  getCity,
+  getDistrict,
+  getState,
+  getStateBySlug,
+  listStates,
+  toDestination,
+  searchRadius,
+  tierOf,
+  totalCities: cities.length,
+  totalDistricts: districts.length,
+  totalStates: states.length,
+};

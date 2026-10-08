@@ -26,6 +26,7 @@ const fareQuery = z
   .strict();
 
 const cityQuery = z.object({ q: safeText(1, 60) }).strict();
+const stateParam = z.object({ code: z.string().regex(/^[A-Za-z]{2}$/, 'must be a 2-letter state code') }).strict();
 
 // Public, user-independent responses can be cached by the CDN.
 const PUBLIC_CACHE = 'public, max-age=300, s-maxage=21600, stale-while-revalidate=86400';
@@ -35,6 +36,7 @@ const EMPTY_PLACES = () => ({ sights: [], food: [], stays: [], rail: [], bus: []
 function planRouter({ openTripMap, overpass, wikipedia, logger, planLimiter = (_q, _s, n) => n() }) {
   const router = express.Router();
   const curatedSlugs = new Set(destinations.map((d) => d.slug));
+  india.registerFeatured(destinations);
 
   const catalogue = destinations.map((d) => ({
     slug: d.slug,
@@ -54,7 +56,9 @@ function planRouter({ openTripMap, overpass, wikipedia, logger, planLimiter = (_
     const curated = bySlug.get(key);
     if (curated) return curated;
 
-    const city = india.getCity(key);
+    // A state on its own plans around its capital; districts plan around their HQ/centre.
+    const state = india.getStateBySlug(key);
+    const city = india.getCity(key) || india.getDistrict(key) || (state?.capital ? india.getCity(state.capital) : null);
     if (city) {
       // OpenStreetMap and Wikipedia are queried in parallel; each covers for the other.
       const [osmResult, wikiResult] = await Promise.allSettled([
@@ -109,12 +113,27 @@ function planRouter({ openTripMap, overpass, wikipedia, logger, planLimiter = (_
 
   router.get('/destinations', (_req, res) => {
     res.set('Cache-Control', PUBLIC_CACHE);
-    res.json({ destinations: catalogue, liveSearch: true, totalCities: india.totalCities });
+    res.json({
+      destinations: catalogue,
+      liveSearch: true,
+      totalCities: india.totalCities,
+      totalDistricts: india.totalDistricts,
+      totalStates: india.totalStates,
+      states: india.listStates(),
+    });
   });
 
   router.get('/cities', validate(cityQuery, 'query'), (req, res) => {
     res.set('Cache-Control', PUBLIC_CACHE);
-    res.json({ cities: india.searchCities(req.valid.query.q, 12, curatedSlugs) });
+    const { results, exact } = india.search(req.valid.query.q, 10, curatedSlugs);
+    res.json({ cities: results, exact });
+  });
+
+  router.get('/states/:code', validate(stateParam, 'params'), (req, res) => {
+    const st = india.getState(req.valid.params.code);
+    if (!st) throw new HttpError(404, 'Unknown state.');
+    res.set('Cache-Control', PUBLIC_CACHE);
+    res.json(st);
   });
 
   router.get('/plan', planLimiter, validate(planQuery, 'query'), async (req, res) => {
@@ -136,7 +155,8 @@ function planRouter({ openTripMap, overpass, wikipedia, logger, planLimiter = (_
   router.get('/fares', planLimiter, validate(fareQuery, 'query'), async (req, res) => {
     const key = req.valid.query.destination.replace(/\s+/g, '-');
     // Fares need only the city profile, never live place data.
-    const dest = bySlug.get(key) || (india.getCity(key) && india.toDestination(india.getCity(key), { sights: [], food: [], stays: [], rail: [], bus: [] }));
+    const place = india.getCity(key) || india.getDistrict(key);
+    const dest = bySlug.get(key) || (place && india.toDestination(place, { sights: [], food: [], stays: [], rail: [], bus: [] }));
     if (!dest) throw new HttpError(404, 'Unknown destination.');
     res.set('Cache-Control', PUBLIC_CACHE);
     res.json(compareFares(dest, req.valid.query.km));

@@ -3,7 +3,7 @@ import { h, clear, $, $$, money, stars } from './dom.js';
 // ---------------------------------------------------------------------------
 // API client — same-origin cookies + CSRF header on every write
 // ---------------------------------------------------------------------------
-const state = { user: null, csrf: null, plan: null, destinations: [], accountsEnabled: true, suggestions: new Map() };
+const state = { user: null, csrf: null, plan: null, destinations: [], accountsEnabled: true, selectDestination: () => {} };
 
 async function api(path, { method = 'GET', body } = {}) {
   const headers = { Accept: 'application/json' };
@@ -76,6 +76,10 @@ async function route() {
     const params = new URLSearchParams(hash.split('?')[1] || '');
     return loadPlan(params);
   }
+  if (hash.startsWith('#/state/')) {
+    showView('state');
+    return loadState(hash.slice('#/state/'.length));
+  }
   if (hash === '#/trips') {
     if (!state.user) return requireSignIn();
     showView('trips');
@@ -103,6 +107,12 @@ async function loadDestinations() {
     const data = await api('/destinations');
     state.destinations = data.destinations;
     if (data.totalCities) $('#city-count').textContent = `${Math.floor(data.totalCities / 100) * 100}+`;
+    if (data.totalDistricts) $('#district-count').textContent = `${Math.floor(data.totalDistricts / 10) * 10}+`;
+    clear($('#state-grid')).append(
+      ...(data.states || []).map((st) =>
+        h('button', { type: 'button', class: 'chip state-chip', onClick: () => (location.hash = `#/state/${st.code}`) }, st.name)
+      )
+    );
   } catch (err) {
     toast(err.message, true);
     return;
@@ -116,8 +126,7 @@ async function loadDestinations() {
           type: 'button',
           class: `dest-card glass art-${i % 8}`,
           onClick: () => {
-            $('#f-destination').value = d.name;
-            state.suggestions.set(d.name.toLowerCase(), d.slug);
+            state.selectDestination(d.slug, d.name);
             $('#plan-form').requestSubmit();
           },
         },
@@ -143,51 +152,165 @@ function initPlanner() {
     })
   );
 
-  // City autocomplete across every Indian city and town (server-side search).
+  // ---- Destination search: cities, districts and states, typo-tolerant ----
   const input = $('#f-destination');
+  const box = $('#dest-suggest');
   let timer;
   let seq = 0;
+  let items = [];
+  let active = -1;
+  let selected = null; // { slug, type, code, label }
+
+  const ICON = { state: '🗺', district: '◎', city: '•' };
+
+  function closeSuggest() {
+    box.hidden = true;
+    input.setAttribute('aria-expanded', 'false');
+    input.removeAttribute('aria-activedescendant');
+    active = -1;
+  }
+
+  function highlight(i) {
+    active = i;
+    [...box.querySelectorAll('[role="option"]')].forEach((li, idx) => {
+      li.setAttribute('aria-selected', String(idx === i));
+      if (idx === i) {
+        input.setAttribute('aria-activedescendant', li.id);
+        li.scrollIntoView({ block: 'nearest' });
+      }
+    });
+  }
+
+  function renderSuggest(results, exact, q) {
+    items = results;
+    clear(box);
+    if (!results.length) {
+      box.append(h('li', { class: 'suggest-empty' }, `No place matches “${q}”. Try another spelling.`));
+    } else {
+      if (!exact) box.append(h('li', { class: 'suggest-head', 'aria-hidden': 'true' }, 'Did you mean…'));
+      results.forEach((r, i) => {
+        box.append(
+          h(
+            'li',
+            {
+              id: `sugg-${i}`,
+              role: 'option',
+              'aria-selected': 'false',
+              class: `suggest-item type-${r.type}`,
+              onMousedown: (ev) => {
+                ev.preventDefault(); // keep focus; avoid blur closing first
+                choose(r);
+              },
+            },
+            h('span', { class: 'suggest-icon', 'aria-hidden': 'true' }, r.curated ? '✦' : ICON[r.type] || '•'),
+            h('span', { class: 'suggest-text' }, h('strong', {}, r.name), h('small', {}, r.hint || r.state))
+          )
+        );
+      });
+    }
+    box.hidden = false;
+    input.setAttribute('aria-expanded', 'true');
+    active = -1;
+  }
+
+  async function fetchSuggest(q) {
+    const mine = ++seq;
+    const data = await api(`/cities?${new URLSearchParams({ q })}`);
+    if (mine !== seq) return null; // a newer keystroke won
+    return data;
+  }
+
+  function choose(r) {
+    closeSuggest();
+    if (r.type === 'state') {
+      input.value = '';
+      selected = null;
+      location.hash = `#/state/${r.code}`;
+      return;
+    }
+    selected = { slug: r.slug, type: r.type, label: r.type === 'district' ? `${r.name} district, ${r.state}` : `${r.name}, ${r.state}` };
+    input.value = selected.label;
+  }
+
   input.addEventListener('input', () => {
     clearTimeout(timer);
+    selected = null;
     const q = input.value.trim();
-    if (q.length < 2 || state.suggestions.has(q.toLowerCase())) return;
+    if (q.length < 2) return closeSuggest();
     timer = setTimeout(async () => {
-      const mine = ++seq;
       try {
-        const { cities } = await api(`/cities?${new URLSearchParams({ q })}`);
-        if (mine !== seq) return; // a newer search is in flight
-        const list = clear($('#dest-list'));
-        for (const c of cities) {
-          const label = `${c.name}, ${c.state}`;
-          state.suggestions.set(label.toLowerCase(), c.slug);
-          list.append(h('option', { value: label }, c.curated ? 'Featured guide' : ''));
-        }
+        const data = await fetchSuggest(q);
+        if (data) renderSuggest(data.cities, data.exact, q);
       } catch {
         /* suggestions are best-effort */
       }
-    }, 180);
+    }, 150);
   });
 
-  async function resolveSlug(raw) {
-    const key = raw.toLowerCase();
-    if (state.suggestions.has(key)) return state.suggestions.get(key);
-    const featured = state.destinations.find((d) => d.name.toLowerCase() === key || d.slug === key);
-    if (featured) return featured.slug;
-    const { cities } = await api(`/cities?${new URLSearchParams({ q: raw.split(',')[0] })}`);
-    return cities[0]?.slug ?? null;
-  }
+  input.addEventListener('keydown', (e) => {
+    if (box.hidden || !items.length) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      highlight((active + 1) % items.length);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      highlight((active - 1 + items.length) % items.length);
+    } else if (e.key === 'Enter' && active >= 0) {
+      e.preventDefault();
+      choose(items[active]);
+    } else if (e.key === 'Escape') {
+      closeSuggest();
+    }
+  });
+  // Close on blur, unless focus came back (e.g. we re-opened "Did you mean…" after submit).
+  input.addEventListener('blur', () =>
+    setTimeout(() => {
+      if (document.activeElement !== input) closeSuggest();
+    }, 150)
+  );
+  input.addEventListener('focus', () => {
+    if (items.length && !selected && input.value.trim().length >= 2) {
+      box.hidden = false;
+      input.setAttribute('aria-expanded', 'true');
+    }
+  });
+
+  // Featured cards and other code can pre-select a destination.
+  state.selectDestination = (slug, label) => {
+    selected = { slug, type: 'city', label };
+    input.value = label;
+  };
 
   $('#plan-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const raw = input.value.trim();
-    if (!raw) return toast('Choose a destination first.', true);
-    let slug;
-    try {
-      slug = await resolveSlug(raw);
-    } catch (err) {
-      return toast(err.message, true);
+    if (!raw) {
+      input.focus();
+      return toast('Type a city, district or state first.', true);
     }
-    if (!slug) return toast('We couldn’t find that place in India — check the spelling and pick from the suggestions.', true);
+    let slug = selected && selected.label === raw ? selected.slug : null;
+    if (!slug) {
+      let data;
+      try {
+        data = await fetchSuggest(raw.split(',')[0]);
+      } catch (err) {
+        return toast(err.message, true);
+      }
+      if (!data) return;
+      const top = data.cities[0];
+      if (!top) {
+        renderSuggest([], false, raw);
+        return;
+      }
+      if (!data.exact) {
+        // Never silently guess: show "Did you mean…" and let the user pick.
+        renderSuggest(data.cities, false, raw);
+        input.focus();
+        return;
+      }
+      if (top.type === 'state') return choose(top);
+      slug = top.slug;
+    }
     const params = new URLSearchParams({
       destination: slug,
       days: String(Math.min(14, Math.max(1, Number(days.value) || 3))),
@@ -195,6 +318,78 @@ function initPlanner() {
       budget: new FormData(e.target).get('budget') || 'comfort',
     });
     location.hash = `#/plan?${params}`;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// State overview: every district + major towns
+// ---------------------------------------------------------------------------
+let stateSeq = 0;
+function planFromState(slug, label) {
+  state.selectDestination(slug, label);
+  location.hash = '#/';
+  // Let the home view render, then plan with whatever days/travellers/style are set.
+  setTimeout(() => $('#plan-form').requestSubmit(), 0);
+}
+
+async function loadState(code) {
+  const mine = ++stateSeq;
+  if (!/^[A-Za-z]{2}$/.test(code)) {
+    location.hash = '#/';
+    return;
+  }
+  $('#st-title').textContent = 'Loading…';
+  $('#st-sub').textContent = '';
+  $('#st-filter').value = '';
+  $('#st-capital').hidden = true;
+  loading(clear($('#st-districts')));
+  clear($('#st-towns'));
+  let st;
+  try {
+    st = await api(`/states/${encodeURIComponent(code)}`);
+  } catch (err) {
+    if (mine !== stateSeq) return;
+    $('#st-title').textContent = 'State not found';
+    clear($('#st-districts')).append(h('div', { class: 'empty glass' }, err.message));
+    return;
+  }
+  if (mine !== stateSeq) return;
+  $('#st-title').textContent = st.name;
+  $('#st-sub').textContent = `${st.districts.length} districts · ${st.totalPlaces} cities & towns${st.capital ? ` · Capital: ${st.capital.name}` : ''}`;
+  if (st.capital) {
+    const cap = $('#st-capital');
+    cap.hidden = false;
+    cap.textContent = `Plan ${st.capital.name}`;
+    cap.onclick = () => planFromState(st.capital.slug, `${st.capital.name}, ${st.name}`);
+  }
+  const grid = clear($('#st-districts'));
+  for (const d of st.districts) {
+    grid.append(
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'district-card glass',
+          dataset: { name: d.name.toLowerCase() },
+          onClick: () => planFromState(d.slug, `${d.name}${d.hq && d.hq !== d.name ? ' district' : ''}, ${st.name}`),
+        },
+        h('strong', {}, d.name),
+        h('small', {}, d.hq ? (d.hq === d.name ? 'District HQ' : `Around ${d.hq}`) : 'District')
+      )
+    );
+  }
+  clear($('#st-towns')).append(
+    ...st.topCities.map((c) =>
+      h('button', { type: 'button', class: 'chip state-chip', onClick: () => planFromState(c.slug, `${c.name}, ${st.name}`) }, c.name)
+    )
+  );
+}
+
+function initStateView() {
+  $('#st-back').addEventListener('click', () => (location.hash = '#/'));
+  $('#st-filter').addEventListener('input', (e) => {
+    const q = e.target.value.trim().toLowerCase();
+    $$('#st-districts .district-card').forEach((card) => (card.hidden = q !== '' && !card.dataset.name.includes(q)));
   });
 }
 
@@ -742,6 +937,7 @@ function initAuth() {
 async function boot() {
   $('#year').textContent = String(new Date().getFullYear());
   initPlanner();
+  initStateView();
   initAuth();
   initSave();
   $$('.tabs [role="tab"]').forEach((t) => t.addEventListener('click', () => selectTab(t.dataset.tab)));

@@ -13,9 +13,16 @@
  *  - Airports & state names: OurAirports (public domain) via `airports-json`.
  *  - `country-state-city` is used only to vote which GeoNames admin code belongs
  *    to which state; none of its data is copied into the output.
+ *  - Districts: India Post all-India pincode directory (data.gov.in, GODL-India)
+ *    via the `india-pincode` package — each district is placed at the median of
+ *    its post offices and linked to its headquarters town.
+ *
+ *   npm i all-the-cities airports-json country-state-city india-pincode
  */
 const fs = require('node:fs');
 const path = require('node:path');
+const zlib = require('node:zlib');
+const { soundKey, distance } = require('../server/services/fuzzy');
 
 const modules = path.resolve(process.argv[2] || '');
 const req = (name) => require(path.join(modules, name));
@@ -113,6 +120,26 @@ const RENAMES = {
   Aurangabad_MH: 'Chhatrapati Sambhajinagar',
   Osmanabad: 'Dharashiv',
   Hoshangabad: 'Narmadapuram',
+  Tanjore: 'Thanjavur',
+  Negapatam: 'Nagapattinam',
+  Teni: 'Theni',
+  Virudunagar: 'Virudhunagar',
+  Kallakkurichchi: 'Kallakurichi',
+  'Dehra Dun': 'Dehradun',
+  Nasik: 'Nashik',
+};
+
+// Old / popular names people still search for.
+const ALIASES = {
+  Mumbai: ['Bombay'], Chennai: ['Madras'], Kolkata: ['Calcutta'], Bengaluru: ['Bangalore'], Mysore: ['Mysuru'],
+  Mangalore: ['Mangaluru'], Belgaum: ['Belagavi'], Gulbarga: ['Kalaburagi'], Hubli: ['Hubballi'],
+  Thiruvananthapuram: ['Trivandrum'], Kozhikode: ['Calicut'], Thrissur: ['Trichur'], Puducherry: ['Pondicherry', 'Pondy'],
+  Tiruchirappalli: ['Trichy', 'Tiruchi'], Thoothukudi: ['Tuticorin'], Thanjavur: ['Tanjore'], Visakhapatnam: ['Vizag', 'Vishakapatnam'],
+  Varanasi: ['Benares', 'Banaras', 'Kashi'], Pune: ['Poona'], Vadodara: ['Baroda'], Ooty: ['Udhagamandalam', 'Ootacamund'],
+  Shimla: ['Simla'], Vijayawada: ['Bezawada'], Panaji: ['Panjim'], Guwahati: ['Gauhati'], Kanpur: ['Cawnpore'],
+  Kochi: ['Ernakulam'], Gurugram: ['Gurgaon'], Prayagraj: ['Allahabad'], Mangaluru: ['Mangalore'],
+  Bellary: ['Ballari'], Bijapur: ['Vijayapura'], Tumkur: ['Tumakuru'], Shimoga: ['Shivamogga'], Hospet: ['Hosapete'],
+  Chikmagalur: ['Chikkamagaluru'], Cuddapah: ['Kadapa'], Rajahmundry: ['Rajamahendravaram'], Bhubaneshwar: ['Bhubaneswar'],
 };
 
 const out = [];
@@ -155,9 +182,108 @@ const final = deduped.map((c) => {
   slug = slug.slice(0, 58);
   slugs.add(slug);
   const row = { slug, name: c.name, state: c.state, lat: c.lat, lng: c.lng, pop: c.pop };
-  if (c.aliases.length) row.aka = c.aliases;
+  const aka = [...new Set([...c.aliases, ...(ALIASES[c.name] || [])])].filter((a) => a !== c.name);
+  if (aka.length) row.aka = aka;
   return row;
 });
+
+// ---------------------------------------------------------------------------
+// Districts (India Post pincode directory) and states
+// ---------------------------------------------------------------------------
+const titleCase = (s) =>
+  ascii(s)
+    .toLowerCase()
+    .replace(/\b([a-z])/g, (m) => m.toUpperCase())
+    .replace(/\b(And|Of|The)\b/g, (m, w, i) => (i === 0 ? w : w.toLowerCase()));
+const stateByUpper = new Map([...stateNames.values()].map((n) => [n.toUpperCase(), n]));
+stateByUpper.set('THE DADRA AND NAGAR HAVELI AND DAMAN AND DIU', stateNames.get('DH'));
+const isoByState = new Map([...stateNames].map(([iso, n]) => [n, iso]));
+
+// Coarse grid of cells near each state's towns: used to reject mis-geocoded post offices
+// (some India Post records place a district's offices hundreds of km away).
+const cell = (a, n) => `${Math.floor(a * 2)}:${Math.floor(n * 2)}`;
+const stateCells = new Map();
+for (const c of final) {
+  const set = stateCells.get(c.state) || new Set();
+  for (let da = -1; da <= 1; da++) for (let dn = -1; dn <= 1; dn++) set.add(cell(c.lat + da * 0.5, c.lng + dn * 0.5));
+  stateCells.set(c.state, set);
+}
+
+const offices = JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(modules, 'india-pincode', 'data', 'pincodes.json.gz'))));
+const groups = new Map();
+for (const o of offices) {
+  const state = stateByUpper.get(String(o.s).toUpperCase());
+  if (!state || !o.i || o.i === 'NA') continue;
+  const key = `${state}|${String(o.i).toUpperCase()}`;
+  const g = groups.get(key) || { state, raw: o.i, pts: [] };
+  if (o.a > 6 && o.a < 37.5 && o.n > 68 && o.n < 98 && stateCells.get(state)?.has(cell(o.a, o.n))) g.pts.push([o.a, o.n]);
+  groups.set(key, g);
+}
+const median = (xs) => {
+  const s = [...xs].sort((a, b) => a - b);
+  return s.length ? s[Math.floor(s.length / 2)] : NaN;
+};
+
+const districts = [];
+for (const g of groups.values()) {
+  if (!g.pts.length) {
+    // No trustworthy coordinates: fall back to a same-named town in the state, if any.
+    const n = titleCase(g.raw);
+    const town = final.find((c) => c.state === g.state && soundKey(c.name) === soundKey(n));
+    if (!town) continue;
+    g.pts.push([town.lat, town.lng]);
+  }
+  let lat = median(g.pts.map((p) => p[0]));
+  let lng = median(g.pts.map((p) => p[1]));
+  // Drop mis-geocoded offices (>150 km from the median) and re-centre.
+  const good = g.pts.filter(([a, n]) => km(lat, lng, a, n) < 150);
+  if (good.length >= 3) {
+    lat = median(good.map((p) => p[0]));
+    lng = median(good.map((p) => p[1]));
+  }
+  const name = titleCase(g.raw);
+  const key = soundKey(name);
+  const inState = final.filter((c) => c.state === g.state);
+  // Headquarters: a town with the district's name, else the biggest town near the centre.
+  const named = inState
+    .filter((c) => km(lat, lng, c.lat, c.lng) < 120)
+    .filter((c) => [c.name, ...(c.aka || [])].some((n) => distance(soundKey(n), key, 1) <= (key.length >= 6 ? 1 : 0)))
+    .sort((a, b) => b.pop - a.pop)[0];
+  const hub =
+    named ||
+    inState.filter((c) => km(lat, lng, c.lat, c.lng) < 40).sort((a, b) => b.pop - a.pop)[0] ||
+    inState.filter((c) => km(lat, lng, c.lat, c.lng) < 90).sort((a, b) => km(lat, lng, a.lat, a.lng) - km(lat, lng, b.lat, b.lng))[0] ||
+    null;
+  const sameAsHub = Boolean(named);
+  const iso = isoByState.get(g.state).toLowerCase();
+  districts.push({
+    slug: `district-${slugify(name).slice(0, 40)}-${iso}`,
+    name,
+    state: g.state,
+    lat: +lat.toFixed(4),
+    lng: +lng.toFixed(4),
+    hub: hub ? hub.slug : null,
+    sameAsHub,
+    offices: g.pts.length,
+  });
+}
+districts.sort((a, b) => a.state.localeCompare(b.state) || a.name.localeCompare(b.name));
+
+const STATE_ALIASES = { OR: ['Orissa'], UT: ['Uttaranchal'], PY: ['Pondicherry'], DL: ['NCT of Delhi', 'New Delhi'], JK: ['J&K', 'Kashmir'] };
+const CAPITALS = {
+  AN: 'port-blair', AP: 'vijayawada', AR: 'itanagar', AS: 'dispur', BR: 'patna', CH: 'chandigarh', CT: 'raipur', DH: 'daman',
+  DL: 'new-delhi', GA: 'panaji', GJ: 'gandhinagar', HR: 'chandigarh', HP: 'shimla', JK: 'srinagar', JH: 'ranchi', KA: 'bengaluru',
+  KL: 'thiruvananthapuram', LA: 'leh', LD: 'kavaratti', MP: 'bhopal', MH: 'mumbai', MN: 'imphal', ML: 'shillong', MZ: 'aizawl',
+  NL: 'kohima', OR: 'bhubaneshwar', PY: 'puducherry', PB: 'chandigarh', RJ: 'jaipur', SK: 'gangtok', TN: 'chennai', TG: 'hyderabad',
+  TR: 'agartala', UP: 'lucknow', UT: 'dehradun', WB: 'kolkata',
+};
+const statesOut = [...stateNames].map(([iso, name]) => ({
+  slug: `state-${iso.toLowerCase()}`,
+  code: iso,
+  name,
+  aka: STATE_ALIASES[iso] || [],
+  capital: final.find((c) => c.slug === CAPITALS[iso]) ? CAPITALS[iso] : null,
+}));
 
 const ap = airports
   .filter((a) => a.iso_country === 'IN' && a.iata_code && a.scheduled_service === 'yes')
@@ -173,5 +299,9 @@ const ap = airports
 const dataDir = path.join(__dirname, '..', 'server', 'data');
 fs.writeFileSync(path.join(dataDir, 'india-cities.json'), JSON.stringify(final));
 fs.writeFileSync(path.join(dataDir, 'india-airports.json'), JSON.stringify(ap));
+fs.writeFileSync(path.join(dataDir, 'india-districts.json'), JSON.stringify(districts));
+fs.writeFileSync(path.join(dataDir, 'india-states.json'), JSON.stringify(statesOut));
 const states = new Set(final.map((c) => c.state));
-console.log(`Wrote ${final.length} cities across ${states.size} states/UTs and ${ap.length} airports.`);
+console.log(`Wrote ${final.length} cities across ${states.size} states/UTs, ${districts.length} districts, ${statesOut.length} states and ${ap.length} airports.`);
+console.log(`Districts without a hub town: ${districts.filter((d) => !d.hub).map((d) => d.name).join(', ') || 'none'}`);
+console.log(`States without capital match: ${statesOut.filter((s) => !s.capital).map((s) => s.name).join(', ') || 'none'}`);

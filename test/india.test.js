@@ -270,3 +270,68 @@ test('config: DATABASE_URL must be postgres and is never echoed; Vercel trusts o
   assert.equal(c.trustProxy, 1);
   assert.equal(loadConfig({ VERCEL: '1' }).accountsEnabled, false);
 });
+
+test('search: typos, transliterations, old names, districts and states', () => {
+  const cur = new Set(['delhi', 'mumbai', 'goa', 'jaipur', 'agra', 'udaipur', 'varanasi', 'hyderabad']);
+  const top = (q) => india.search(q, 5, cur).results[0];
+  assert.equal(top('Thirunelveli').slug, 'tirunelveli');
+  assert.equal(top('Kanniyakumari').slug, 'kanyakumari');
+  assert.equal(top('Madras').slug, 'chennai');
+  assert.equal(top('Tuticorin').slug, 'thoothukudi');
+  assert.equal(top('Thanjavoor').slug, 'thanjavur');
+  assert.equal(top('Hydrabad').slug, 'hyderabad');
+  assert.equal(top('Orissa').type, 'state');
+  assert.equal(top('tamilnadu').code, 'TN');
+  assert.equal(top('Tenkasi').type, 'district');
+  assert.equal(top('Nilgiris').type, 'district');
+  assert.equal(india.search('Hydrabad', 5, cur).exact, false, 'typo corrections are flagged as "did you mean"');
+  assert.equal(india.search('Chennai', 5, cur).exact, true);
+  assert.deepEqual(india.search('zzqqxx').results, []);
+});
+
+test('every state lists its districts; Tamil Nadu has all 38', () => {
+  const tn = india.getState('TN');
+  assert.equal(tn.name, 'Tamil Nadu');
+  assert.equal(tn.districts.length, 38);
+  assert.equal(tn.capital.slug, 'chennai');
+  for (const st of india.listStates()) {
+    const full = india.getState(st.code);
+    assert.ok(full.districts.length >= 1, st.name);
+    for (const d of full.districts) assert.match(d.slug, /^[a-z0-9][a-z0-9 -]{0,58}$/);
+  }
+  const districtsData = require('../server/data/india-districts.json');
+  assert.ok(districtsData.length >= 740);
+  assert.equal(new Set(districtsData.map((d) => d.slug)).size, districtsData.length);
+});
+
+test('API: districts plan, states overview, did-you-mean search', async () => {
+  const srv = await startServer();
+  try {
+    const c = client(srv.base);
+    const s = await c.req('/api/cities?q=Thirunelveli');
+    assert.equal(s.json.cities[0].slug, 'tirunelveli');
+    const typo = await c.req('/api/cities?q=Coimbatur');
+    assert.equal(typo.json.exact, false);
+    assert.equal(typo.json.cities[0].slug, 'coimbatore');
+
+    const plan = await c.req('/api/plan?destination=district-tenkasi-tn&days=2');
+    assert.equal(plan.status, 200);
+    assert.match(plan.json.destination.name, /Tenkasi district/);
+    assert.equal(plan.json.destination.region, 'Tamil Nadu');
+
+    const st = await c.req('/api/states/tn');
+    assert.equal(st.status, 200);
+    assert.equal(st.json.districts.length, 38);
+    assert.equal((await c.req('/api/states/zz')).status, 404);
+    assert.equal((await c.req('/api/states/t1')).status, 400);
+
+    const viaState = await c.req('/api/plan?destination=state-tn&days=2');
+    assert.equal(viaState.json.destination.slug, 'chennai', 'a state plans around its capital');
+
+    const list = await c.req('/api/destinations');
+    assert.equal(list.json.states.length, 36);
+    assert.ok(list.json.totalDistricts >= 740);
+  } finally {
+    await srv.close();
+  }
+});

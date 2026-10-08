@@ -46,8 +46,12 @@
         <form class="planner glass" id="plan-form" novalidate autocomplete="off">
           <div class="field field-dest">
             <label for="f-destination">Destination</label>
-            <input id="f-destination" name="destination" list="dest-list" required maxlength="80" placeholder="Any city or town in India" />
-            <datalist id="dest-list"></datalist>
+            <div class="combo">
+              <input id="f-destination" name="destination" required maxlength="80" placeholder="City, district or state in India"
+                autocomplete="off" autocapitalize="words" spellcheck="false"
+                role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="dest-suggest" />
+              <ul class="suggest" id="dest-suggest" role="listbox" aria-label="Suggestions" hidden></ul>
+            </div>
           </div>
           <div class="field">
             <label for="f-days">Days</label>
@@ -74,9 +78,17 @@
       <div class="section">
         <div class="section-head">
           <h2 class="title">Featured guides</h2>
-          <p class="muted">Hand-curated deep dives — or search any of <strong id="city-count">3,400+</strong> cities and towns across all 36 states &amp; union territories, planned with live map data.</p>
+          <p class="muted">Hand-curated deep dives — or search any of <strong id="city-count">3,400+</strong> cities and towns, <strong id="district-count">750+</strong> districts and all 36 states &amp; union territories, planned with live map data.</p>
         </div>
         <div class="dest-grid" id="dest-grid"></div>
+      </div>
+
+      <div class="section">
+        <div class="section-head">
+          <h2 class="title">Explore by state</h2>
+          <p class="muted">Open a state to see every district and its major towns.</p>
+        </div>
+        <div class="state-chips" id="state-grid"></div>
       </div>
 
       <div class="section features">
@@ -139,6 +151,29 @@
       </div>
 
       <p class="disclaimer" id="r-disclaimer"></p>
+    </section>
+
+    <!-- ================= STATE ================= -->
+    <section class="view" data-view="state" hidden>
+      <div class="result-hero glass">
+        <div>
+          <p class="eyebrow" id="st-eyebrow">State / union territory</p>
+          <h1 class="display" id="st-title"></h1>
+          <p class="lead" id="st-sub"></p>
+        </div>
+        <div class="result-actions">
+          <button type="button" class="btn btn-ghost" id="st-back">← New search</button>
+          <button type="button" class="btn btn-gold" id="st-capital" hidden>Plan the capital</button>
+        </div>
+      </div>
+      <div class="field state-filter">
+        <label for="st-filter">Find a district</label>
+        <input id="st-filter" maxlength="60" placeholder="Type to filter districts…" autocomplete="off" />
+      </div>
+      <h2 class="subtitle">Districts</h2>
+      <div class="district-grid" id="st-districts"></div>
+      <h2 class="subtitle">Major towns</h2>
+      <div class="state-chips" id="st-towns"></div>
     </section>
 
     <!-- ================= MY TRIPS ================= -->

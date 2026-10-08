@@ -10,7 +10,9 @@ Pick a destination and the number of days. Voyagr builds a day-by-day itinerary 
 - **Trip cost estimate**: stay, food, local transport and entry fees
 - **Accounts**: you can save trips, and there is an **admin console** for user management and security events
 
-**Every city and town in India.** You can search 3,472 places across all 36 states and union territories: every GeoNames settlement with 1,000+ people, plus popular tourist towns such as Gulmarg, Khajuraho and Havelock.
+**Every city, town, district and state in India.** You can search 3,472 cities and towns, 751 districts and all 36 states and union territories.
+- **Typo-tolerant search** with suggestions under the search bar. It handles transliteration variants (Thirunelveli → Tirunelveli, Kanniyakumari → Kanyakumari), old names (Madras, Tuticorin, Trichy, Orissa) and ordinary typos ("Did you mean Coimbatore?").
+- **District plans** centre on the district headquarters. **State pages** list every district and the major towns.
 - **Featured guides** (Delhi, Mumbai, Goa, Jaipur, Agra, Udaipur, Varanasi, Hyderabad) are hand-curated, with ratings, prices and must-try dishes.
 - **Every other city** is planned with **live OpenStreetMap data** fetched on the server: sights, restaurants, hotels, railway stations and bus stands. On top of that come the nearest airports (from a bundled dataset), city-sized cost, fare and stay-price profiles, local transport and nearby day trips. No API key is needed.
 - Live places never get invented ratings or prices. Notable places are marked "✦ Notable" (they have a Wikipedia/Wikidata entry), and stay prices are labelled as typical ranges for the city.
@@ -26,7 +28,7 @@ An optional `OPENTRIPMAP_API_KEY` adds places **outside** India. It is used only
 - **Frontend**: dependency-free HTML/CSS/ES modules with a midnight-navy and champagne-gold theme, served under a strict Content-Security-Policy
 - **Database**: PostgreSQL in production (`DATABASE_URL`, for example Neon from Vercel's Storage tab), SQLite locally
 - **Runtime dependencies** (7): `express`, `helmet`, `cors`, `express-rate-limit`, `cookie-parser`, `zod`, `pg`
-- **Data**: GeoNames (CC BY 4.0), OurAirports (public domain), © OpenStreetMap contributors (ODbL). Regenerate the bundled city and airport files with `scripts/build-india-data.js`.
+- **Data**: GeoNames (CC BY 4.0), OurAirports (public domain), India Post pincode directory via data.gov.in (GODL-India) for districts, © OpenStreetMap contributors (ODbL), Wikipedia (CC BY-SA). Regenerate the bundled city and airport files with `scripts/build-india-data.js`.
 
 ## Getting started
 
