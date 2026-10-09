@@ -9,6 +9,14 @@ Pick a destination and the number of days. Voyagr builds a day-by-day itinerary 
 - **Cab & auto fare comparison across apps**: Uber, Ola, Rapido, inDrive, GoaMiles and the government meter auto. Results are grouped by vehicle type, with the cheapest option highlighted. You can compare between any two sights or for any distance.
 - **Trip cost estimate**: stay, food, local transport and entry fees
 - **Accounts**: you can save trips, and there is an **admin console** for user management and security events
+- **Opening hours & closures**: restaurant hours, an "open at lunch/dinner on that day" check, "closed on Day N" warnings, and temporarily-closed / under-renovation places flagged and never used in plans
+- **Reserve a table**: call, Google reservations where supported, and booking search links
+- **Photo spots** with tips and the sunrise/sunset golden hour for each trip day
+- **Before you go**: live weather forecast (Open-Meteo) or seasonal expectations, a packing list (sweater, umbrella, sunscreen…), dos & don'ts, permit / dry-state / altitude alerts, and emergency numbers
+- **Nightlife & events**: bars, pubs and clubs nearby, plus event listings for your dates
+- **Customisable itinerary**: reorder, remove, move between days, add sights or your own stops and notes; edits are kept and saved with your trip; **Download PDF**
+- **Where was this photo taken?**: reads the GPS location stored in a photo on your device (the photo isn't uploaded), then shows the exact spot, the town and famous places nearby; optional landmark recognition for photos without GPS
+- **Price-style filters**: Restaurants and Stays default to the style you picked (Affordable / Comfort / Premium), with "All" one tap away
 
 **Every city, town, district and state in India.** You can search 3,472 cities and towns, 751 districts and all 36 states and union territories.
 - **Typo-tolerant search** with suggestions under the search bar. It handles transliteration variants (Thirunelveli → Tirunelveli, Kanniyakumari → Kanyakumari), old names (Madras, Tuticorin, Trichy, Orissa) and ordinary typos ("Did you mean Coimbatore?").
@@ -17,6 +25,15 @@ Pick a destination and the number of days. Voyagr builds a day-by-day itinerary 
 - **Every other city** is planned with **live OpenStreetMap data** fetched on the server: sights, restaurants, hotels, railway stations and bus stands. On top of that come the nearest airports (from a bundled dataset), city-sized cost, fare and stay-price profiles, local transport and nearby day trips. No API key is needed.
 - Live places never get invented ratings or prices. Notable places are marked "✦ Notable" (they have a Wikipedia/Wikidata entry), and stay prices are labelled as typical ranges for the city.
 - If OpenStreetMap is unreachable, the plan still loads with transport, fares and costs, plus links to search the city on Google Maps.
+
+### Optional Google keys (recommended for production)
+
+| Variable | Unlocks | Notes |
+| --- | --- | --- |
+| `GOOGLE_PLACES_API_KEY` | Accurate restaurant hours, **temporarily closed** status, price levels (better filters), ratings, phone numbers and "Reserve on Google" | Places API (New) Nearby Search. Billed by Google per request; results are cached for 12 hours. Restrict the key to the Places API. |
+| `GOOGLE_VISION_API_KEY` | Landmark recognition for photos **without** GPS data | Each photo is shrunk and stripped of metadata in the browser, sent only after the user taps "Recognise landmark", forwarded once and never stored. Limited to 10 per hour per IP. |
+
+Without these keys, everything else still works using free data (OpenStreetMap, Wikipedia, Open-Meteo).
 
 An optional `OPENTRIPMAP_API_KEY` adds places **outside** India. It is used only on the server and never sent to the browser.
 

@@ -355,7 +355,11 @@ function toDestination(city, places, curatedSlugs = new Set()) {
       return {
         name: p.name,
         area: area(p),
-        cuisine: p.tags.cuisine ? p.tags.cuisine.replace(/[_;]/g, (m) => (m === ';' ? ', ' : ' ')) : p.tags.amenity === 'cafe' ? 'Café' : 'Local cuisine',
+        cuisine: p.tags.cuisine
+          ? p.tags.cuisine.replace(/[_;]/g, (m) => (m === ';' ? ', ' : ' ')).replace(/\b[a-z]/g, (m) => m.toUpperCase())
+          : p.tags.amenity === 'cafe'
+            ? 'Café'
+            : 'Local cuisine',
         tier: null,
         costForTwo: null,
         rating: null,

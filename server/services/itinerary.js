@@ -205,13 +205,14 @@ function generateItinerary(dest, { days, travelers, budget, start }) {
     .sort((a, b) => tierRank(a) - tierRank(b) || score(b) - score(a))
     .map(({ week, rank, ...r }) => {
       const mapsUrl = mapsLink(r.name, r.area, city);
+      const phone = r.phone ? String(r.phone).replace(/[^\d+]/g, '') : '';
       return {
         ...r,
         mapsUrl,
         hoursText: describe(week) || r.rawHours || null,
         closedOnTripDays: week ? tripDays.filter((t) => week[t.dayIndex]?.length === 0).map((t) => `Day ${t.day} (${t.weekday})`) : [],
         reserve: {
-          call: r.phone ? `tel:${r.phone}` : null,
+          call: /^\+?\d{6,15}$/.test(phone) ? `tel:${phone}` : null,
           google: r.googleMapsUri || null,
           googleReservable: Boolean(r.reservable),
           search: googleSearch(`reserve a table ${r.name} ${city}`),

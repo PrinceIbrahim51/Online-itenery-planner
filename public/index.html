@@ -62,6 +62,10 @@
             </div>
           </div>
           <div class="field">
+            <label for="f-start">Start date</label>
+            <input id="f-start" name="start" type="date" required />
+          </div>
+          <div class="field">
             <label for="f-travelers">Travellers</label>
             <select id="f-travelers" name="travelers"></select>
           </div>
@@ -91,6 +95,19 @@
         <div class="state-chips" id="state-grid"></div>
       </div>
 
+      <div class="section">
+        <div class="section-head">
+          <h2 class="title">Where was this photo taken?</h2>
+          <p class="muted">Pick a photo from your phone. We read its location on your device — the photo itself is not uploaded — and show the exact spot, the town and famous places right around it.</p>
+        </div>
+        <label class="photo-drop glass" for="photo-input">
+          <span class="ficon" aria-hidden="true">◉</span>
+          <span><strong>Choose a photo</strong><small class="muted">JPEG photos from your camera work best</small></span>
+          <input id="photo-input" type="file" accept="image/*" />
+        </label>
+        <div id="photo-result"></div>
+      </div>
+
       <div class="section features">
         <div class="feature glass"><span class="ficon" aria-hidden="true">✦</span><h3>Day-by-day plans</h3><p>Sights clustered by neighbourhood so you spend time exploring, not commuting.</p></div>
         <div class="feature glass"><span class="ficon" aria-hidden="true">⇄</span><h3>Fare comparison</h3><p>Uber, Ola, Rapido, inDrive &amp; metered autos side by side — cheapest highlighted.</p></div>
@@ -110,6 +127,7 @@
         </div>
         <div class="result-actions">
           <button type="button" class="btn btn-ghost" id="btn-back">← New search</button>
+          <button type="button" class="btn btn-ghost" id="btn-pdf">Download PDF</button>
           <button type="button" class="btn btn-gold" id="btn-save">Save trip</button>
         </div>
       </div>
@@ -124,6 +142,9 @@
         <button role="tab" type="button" data-tab="stays" aria-selected="false">Stays</button>
         <button role="tab" type="button" data-tab="transport" aria-selected="false">Transport</button>
         <button role="tab" type="button" data-tab="rides" aria-selected="false">Cab &amp; auto compare</button>
+        <button role="tab" type="button" data-tab="photos" aria-selected="false">Photo spots</button>
+        <button role="tab" type="button" data-tab="advice" aria-selected="false">Before you go</button>
+        <button role="tab" type="button" data-tab="night" aria-selected="false">Nightlife &amp; events</button>
       </div>
 
       <div class="tab-panel" data-panel="itinerary" role="tabpanel"></div>
@@ -131,6 +152,9 @@
       <div class="tab-panel" data-panel="food" role="tabpanel" hidden></div>
       <div class="tab-panel" data-panel="stays" role="tabpanel" hidden></div>
       <div class="tab-panel" data-panel="transport" role="tabpanel" hidden></div>
+      <div class="tab-panel" data-panel="photos" role="tabpanel" hidden></div>
+      <div class="tab-panel" data-panel="advice" role="tabpanel" hidden></div>
+      <div class="tab-panel" data-panel="night" role="tabpanel" hidden></div>
       <div class="tab-panel" data-panel="rides" role="tabpanel" hidden>
         <div class="ride-controls glass">
           <div class="field">
@@ -246,5 +270,8 @@
   </dialog>
 
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+  <!-- Filled in just before printing; the only thing visible in the PDF. -->
+  <div id="print-root" aria-hidden="true"></div>
 </body>
 </html>

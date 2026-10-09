@@ -661,6 +661,7 @@ select:focus {
 }
 .result-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
 }
 .chips {
@@ -1203,5 +1204,304 @@ select:focus {
     animation: none !important;
     transition: none !important;
     scroll-behavior: auto !important;
+  }
+}
+
+/* ==========================================================================
+   Customisable itinerary, filters, restaurant status, advice, photos
+   ========================================================================== */
+.section-gap {
+  margin-top: 18px;
+}
+.edit-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.sun-line {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin: -6px 0 12px;
+}
+.day-note,
+.add-stop input,
+.add-stop select,
+.stop-controls select {
+  font: inherit;
+  font-size: 0.88rem;
+  padding: 8px 10px;
+}
+.day-note {
+  width: 100%;
+  resize: vertical;
+  margin-bottom: 12px;
+  color: var(--text);
+  background: rgba(8, 12, 26, 0.7);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+}
+.day-user-note {
+  margin: 4px 0;
+  font-size: 0.88rem;
+  color: var(--gold);
+}
+.stop-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.stop-controls select {
+  width: auto;
+  max-width: 180px;
+}
+.icon-mini {
+  font: inherit;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+.icon-mini:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.icon-mini.danger {
+  color: var(--rose);
+  border-color: rgba(255, 122, 138, 0.35);
+}
+.add-stop {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  margin: 6px 0 14px;
+  padding: 12px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-sm);
+}
+.add-stop input:first-of-type {
+  grid-column: 1 / -1;
+}
+.filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.filter-chips .chip.gold {
+  color: #1b1405;
+}
+.hours-line {
+  font-size: 0.84rem;
+}
+.open-ok {
+  font-size: 0.8rem;
+  color: var(--emerald);
+  margin-top: 4px;
+}
+.open-unknown {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.closed-flag,
+.closed-days {
+  font-size: 0.84rem;
+  color: var(--rose);
+}
+.card.is-closed {
+  opacity: 0.72;
+  border-color: rgba(255, 122, 138, 0.35);
+}
+.links.reserve {
+  flex-wrap: wrap;
+  align-items: center;
+}
+.forecast-row {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding: 6px 0;
+}
+.forecast-day {
+  display: flex;
+  flex-direction: column;
+  min-width: 110px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(8, 12, 26, 0.5);
+  border: 1px solid var(--line-soft);
+  font-size: 0.86rem;
+}
+.pack-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 0 18px;
+}
+.alert-card {
+  border-color: rgba(255, 196, 120, 0.45);
+}
+.tab-panel[data-panel='advice'] > * + *,
+.tab-panel[data-panel='night'] > * + *,
+.tab-panel[data-panel='photos'] > * + * {
+  margin-top: 18px;
+}
+.photo-drop {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 20px 22px;
+  cursor: pointer;
+  max-width: 560px;
+}
+.photo-drop span:last-of-type {
+  display: flex;
+  flex-direction: column;
+}
+.photo-drop input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+.photo-drop:focus-within {
+  outline: 2px solid var(--gold);
+}
+.photo-card {
+  margin-top: 16px;
+  padding: 20px 22px;
+  max-width: 720px;
+}
+.photo-card h3 {
+  font-family: var(--font-display);
+  font-size: 1.4rem;
+  margin: 4px 0;
+}
+.photo-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 12px 0;
+}
+.photo-nearby {
+  padding-left: 18px;
+}
+#print-root {
+  display: none;
+}
+
+@media (max-width: 680px) {
+  .add-stop {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ==========================================================================
+   Print / "Save as PDF": a clean, light, A4 document of the itinerary
+   ========================================================================== */
+@media print {
+  @page {
+    size: A4;
+    margin: 14mm 12mm;
+  }
+  :root {
+    color-scheme: light;
+  }
+  html,
+  body {
+    background: #fff !important;
+    color: #1d1d1f !important;
+  }
+  body > *:not(#print-root) {
+    display: none !important;
+  }
+  #print-root {
+    display: block !important;
+    font-family: var(--font-body);
+    font-size: 10.5pt;
+    line-height: 1.45;
+    color: #1d1d1f;
+  }
+  #print-root h1,
+  #print-root h2 {
+    font-family: var(--font-display);
+    color: #14213d;
+    margin: 0 0 4px;
+  }
+  #print-root h1 {
+    font-size: 22pt;
+  }
+  #print-root h2 {
+    font-size: 14pt;
+    border-bottom: 1.5px solid #c9a25a;
+    padding-bottom: 3px;
+    margin-top: 14px;
+  }
+  #print-root h3 {
+    font-size: 11pt;
+    margin: 10px 0 2px;
+  }
+  .p-brand {
+    font-family: var(--font-display);
+    color: #a8813e;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    font-size: 9pt;
+  }
+  .p-head {
+    margin-bottom: 10px;
+  }
+  .p-costs {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 6px 0 4px;
+  }
+  .p-costs th,
+  .p-costs td {
+    border: 1px solid #ddd;
+    padding: 5px 7px;
+    text-align: left;
+    font-size: 9.5pt;
+  }
+  .p-costs th {
+    background: #f6f1e6;
+  }
+  .p-day,
+  .p-advice {
+    break-inside: avoid-page;
+  }
+  .p-day ol {
+    margin: 4px 0 4px 18px;
+    padding: 0;
+  }
+  .p-day li {
+    margin-bottom: 4px;
+  }
+  .p-muted {
+    color: #666;
+    font-size: 9.5pt;
+  }
+  .p-note {
+    color: #8a5a00;
+    font-style: italic;
+  }
+  .p-meals {
+    background: #f6f1e6;
+    padding: 5px 8px;
+    border-radius: 4px;
+  }
+  .p-cols {
+    columns: 2;
+  }
+  .p-foot {
+    margin-top: 16px;
+    color: #777;
+    font-size: 8.5pt;
   }
 }

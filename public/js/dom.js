@@ -9,10 +9,14 @@ const ALLOWED_LINK_HOSTS = new Set([
   'www.rapido.bike',
   'indrive.com',
   'goamiles.com',
+  'maps.google.com',
+  'in.bookmyshow.com',
 ]);
 
 /** Returns the URL only if it is https and points to an allow-listed host. */
 export function safeUrl(value) {
+  // Phone links: digits only (with optional leading +), nothing else.
+  if (typeof value === 'string' && /^tel:\+?\d{3,15}$/.test(value)) return value;
   try {
     const u = new URL(String(value));
     if (u.protocol === 'https:' && ALLOWED_LINK_HOSTS.has(u.hostname)) return u.href;
@@ -36,8 +40,10 @@ export function h(tag, attrs = {}, ...children) {
       const url = safeUrl(value);
       if (url) {
         el.setAttribute('href', url);
-        el.setAttribute('target', '_blank');
-        el.setAttribute('rel', 'noopener noreferrer nofollow');
+        if (!url.startsWith('tel:')) {
+          el.setAttribute('target', '_blank');
+          el.setAttribute('rel', 'noopener noreferrer nofollow');
+        }
       }
     } else if (key === 'style') {
       // Only CSS custom properties with numeric values are permitted.
