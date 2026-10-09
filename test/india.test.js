@@ -367,3 +367,13 @@ test('Wikipedia name search finds district sights and drops far-away namesakes',
     .placesAround('x', 1, 2, 'Foo" OR insource:/x/');
   assert.match(urls.at(-1).searchParams.get('gsrsearch'), /^"Foo OR insource x" /);
 });
+
+test('WhatsApp booking numbers: only when listed, normalised to international form', () => {
+  const { normalise } = require('../server/services/overpass');
+  const mk = (tags) => normalise([{ type: 'node', id: 1, lat: 1, lon: 2, tags: { name: 'Rasa', amenity: 'restaurant', ...tags } }]).food[0].tags.whatsapp;
+  assert.equal(mk({ 'contact:whatsapp': '98765 43210' }), '919876543210');
+  assert.equal(mk({ whatsapp: '+91 98765-43210' }), '919876543210');
+  assert.equal(mk({ 'contact:whatsapp': '098765 43210' }), '919876543210');
+  assert.equal(mk({ phone: '+91 98765 43210' }), null, 'a phone number alone is not assumed to be WhatsApp');
+  assert.equal(mk({ whatsapp: 'call us' }), null);
+});

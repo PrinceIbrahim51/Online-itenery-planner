@@ -10,7 +10,7 @@ Pick a destination and the number of days. Voyagr builds a day-by-day itinerary 
 - **Trip cost estimate**: stay, food, local transport and entry fees
 - **Accounts**: you can save trips, and there is an **admin console** for user management and security events
 - **Opening hours & closures**: restaurant hours, an "open at lunch/dinner on that day" check, "closed on Day N" warnings, and temporarily-closed / under-renovation places flagged and never used in plans
-- **Reserve a table**: call, Google reservations where supported, and booking search links
+- **Book a table**: "WhatsApp to book" (a ready-written message with your party size and date) when the restaurant lists WhatsApp, and "Call to book" when it lists a phone number
 - **Photo spots** with tips and the sunrise/sunset golden hour for each trip day
 - **Before you go**: live weather forecast (Open-Meteo) or seasonal expectations, a packing list (sweater, umbrella, sunscreen…), dos & don'ts, permit / dry-state / altitude alerts, and emergency numbers
 - **Nightlife & events**: bars, pubs and clubs nearby, plus event listings for your dates
@@ -42,7 +42,7 @@ An optional `OPENTRIPMAP_API_KEY` adds places **outside** India. It is used only
 ## Tech
 
 - **Backend**: Node.js 22 + Express 5, built-in `node:sqlite` (no native build step), zod validation
-- **Frontend**: dependency-free HTML/CSS/ES modules with a midnight-navy and champagne-gold theme, served under a strict Content-Security-Policy
+- **Frontend**: dependency-free HTML/CSS/ES modules with a midnight-navy and champagne-gold glassmorphism theme (frosted panels, no pill shapes or purple gradients), served under a strict Content-Security-Policy
 - **Database**: PostgreSQL in production (`DATABASE_URL`, for example Neon from Vercel's Storage tab), SQLite locally
 - **Runtime dependencies** (7): `express`, `helmet`, `cors`, `express-rate-limit`, `cookie-parser`, `zod`, `pg`
 - **Data**: GeoNames (CC BY 4.0), OurAirports (public domain), India Post pincode directory via data.gov.in (GODL-India) for districts, © OpenStreetMap contributors (ODbL), Wikipedia (CC BY-SA). Regenerate the bundled city and airport files with `scripts/build-india-data.js`.

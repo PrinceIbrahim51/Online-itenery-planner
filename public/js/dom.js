@@ -11,6 +11,7 @@ const ALLOWED_LINK_HOSTS = new Set([
   'goamiles.com',
   'maps.google.com',
   'in.bookmyshow.com',
+  'wa.me',
 ]);
 
 /** Returns the URL only if it is https and points to an allow-listed host. */

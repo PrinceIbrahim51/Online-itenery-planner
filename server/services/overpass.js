@@ -95,6 +95,20 @@ function phoneOf(tags) {
   return /^\+?\d{6,15}$/.test(cleaned) ? cleaned : null;
 }
 
+/**
+ * WhatsApp number in international form (digits only, no +) — only when the place
+ * explicitly lists one. Indian 10-digit mobiles get the 91 country code.
+ */
+function whatsappOf(tags) {
+  const raw = tags['contact:whatsapp'] || tags.whatsapp;
+  if (!raw) return null;
+  let d = String(raw).split(/[;,]/)[0].replace(/[^\d+]/g, '');
+  if (d.startsWith('+')) d = d.slice(1);
+  else if (/^0[6-9]\d{9}$/.test(d)) d = `91${d.slice(1)}`;
+  else if (/^[6-9]\d{9}$/.test(d)) d = `91${d}`;
+  return /^\d{10,15}$/.test(d) ? d : null;
+}
+
 function normalise(raw) {
   const out = { sights: [], food: [], stays: [], rail: [], bus: [], night: [] };
   const seen = new Set();
@@ -135,6 +149,7 @@ function normalise(raw) {
         note: pick('note', 200),
         opening_hours: pick('opening_hours', 200),
         phone: phoneOf(tags),
+        whatsapp: whatsappOf(tags),
       },
     });
   }

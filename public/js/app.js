@@ -883,8 +883,20 @@ function renderFood(p) {
   );
 }
 
+/** wa.me chat with a ready-to-send booking request (party size + first trip date). */
+function whatsappLink(r) {
+  const num = r.reserve?.whatsapp;
+  if (!num || !/^\d{10,15}$/.test(num)) return null;
+  const p = state.plan;
+  const people = p?.params.travelers ?? 2;
+  const when = p?.params.start ? prettyDate(p.params.start) : 'today';
+  const text = `Hello ${r.name}, I'd like to book a table for ${people} ${people === 1 ? 'person' : 'people'} on ${when}. Is it available?`;
+  return `https://wa.me/${num}?text=${encodeURIComponent(text)}`;
+}
+
 function restaurantCard(r) {
   const tel = r.reserve?.call;
+  const wa = whatsappLink(r);
   return h(
     'article',
     { class: `card glass ${r.status ? 'is-closed' : ''}` },
@@ -899,14 +911,17 @@ function restaurantCard(r) {
       ? h('div', { class: 'row' }, h('span', { class: 'price' }, money(r.costForTwo)), h('span', { class: 'muted' }, 'approx. for two'))
       : null,
     typeof r.rating === 'number' && r.ratingCount ? h('p', { class: 'muted' }, `${r.ratingCount.toLocaleString('en-IN')} Google reviews`) : null,
-    h(
-      'div',
-      { class: 'links reserve' },
-      tel ? h('a', { href: tel, class: 'btn btn-sm btn-ghost' }, '📞 Call to reserve') : null,
-      r.reserve?.googleReservable && r.reserve.google ? h('a', { href: r.reserve.google, class: 'btn btn-sm btn-gold' }, 'Reserve on Google ↗') : null,
-      h('a', { href: r.reserve?.google || r.mapsUrl }, 'Open in Maps ↗'),
-      r.reserve?.search ? h('a', { href: r.reserve.search }, 'Find booking options ↗') : null
-    )
+    r.status
+      ? null
+      : h(
+          'div',
+          { class: 'book-row' },
+          h('span', { class: 'book-label' }, 'Book a table'),
+          wa ? h('a', { href: wa, class: 'btn btn-sm btn-whatsapp' }, 'WhatsApp to book') : null,
+          tel ? h('a', { href: tel, class: 'btn btn-sm btn-ghost' }, 'Call to book') : null,
+          !wa && !tel ? h('span', { class: 'muted' }, 'No phone or WhatsApp listed') : null
+        ),
+    h('div', { class: 'links' }, h('a', { href: r.googleMapsUri || r.mapsUrl }, 'Open in Maps ↗'))
   );
 }
 

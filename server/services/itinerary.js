@@ -211,11 +211,10 @@ function generateItinerary(dest, { days, travelers, budget, start }) {
         mapsUrl,
         hoursText: describe(week) || r.rawHours || null,
         closedOnTripDays: week ? tripDays.filter((t) => week[t.dayIndex]?.length === 0).map((t) => `Day ${t.day} (${t.weekday})`) : [],
+        // Book a table: WhatsApp when the place lists it, otherwise a phone call.
         reserve: {
+          whatsapp: /^\d{10,15}$/.test(r.whatsapp || '') ? r.whatsapp : null,
           call: /^\+?\d{6,15}$/.test(phone) ? `tel:${phone}` : null,
-          google: r.googleMapsUri || null,
-          googleReservable: Boolean(r.reservable),
-          search: googleSearch(`reserve a table ${r.name} ${city}`),
         },
       };
     });

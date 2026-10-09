@@ -122,7 +122,8 @@ test('meals avoid temporarily closed restaurants and ones shut at meal time', ()
   const allDay = plan.restaurants.find((r) => r.name === 'All Day');
   assert.equal(allDay.hoursText, 'Mon–Sun 10:00–23:00');
   assert.equal(allDay.reserve.call, 'tel:+911412345678');
-  assert.match(allDay.reserve.search, /^https:\/\/www\.google\.com\/search\?q=reserve/);
+  assert.equal(allDay.reserve.whatsapp, null, 'WhatsApp only when the place lists it');
+  assert.deepEqual(Object.keys(allDay.reserve).sort(), ['call', 'whatsapp'], 'booking = WhatsApp or call only');
   const mondays = plan.restaurants.find((r) => r.name === 'Mondays Off');
   assert.deepEqual(mondays.closedOnTripDays, ['Day 1 (Mon)']);
   assert.ok(!plan.restaurants.some((r) => 'week' in r), 'internal hours data not leaked');

@@ -371,6 +371,7 @@ function toDestination(city, places, curatedSlugs = new Set()) {
         rawHours: p.hours,
         status,
         phone: p.tags.phone,
+        whatsapp: p.tags.whatsapp || null,
         reservable: false,
         hoursSource: p.hours ? 'openstreetmap' : null,
       };
