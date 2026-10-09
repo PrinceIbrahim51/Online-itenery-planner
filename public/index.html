@@ -38,9 +38,8 @@
     <!-- ================= HOME ================= -->
     <section class="view" data-view="home">
       <div class="hero">
-        <p class="eyebrow">Curated journeys · Smart routing · Fair fares</p>
         <h1 class="display">Travel, <em>beautifully</em> planned.</h1>
-        <p class="lead">Pick a destination and the number of days. We craft a day-by-day itinerary with must-see sights, the best tables in town, handpicked stays, every way to get around — and compare cab &amp; auto fares across apps.</p>
+        <p class="lead">Pick a place and the number of days — get a full day-by-day plan.</p>
 
         <form class="planner glass" id="plan-form" novalidate autocomplete="off">
           <div class="field field-dest">
@@ -81,7 +80,7 @@
       <div class="section">
         <div class="section-head">
           <h2 class="title">Featured guides</h2>
-          <p class="muted">Hand-curated deep dives — or search any of <strong id="city-count">3,400+</strong> cities and towns, <strong id="district-count">750+</strong> districts and all 36 states &amp; union territories, planned with live map data.</p>
+          <p class="muted">Or search any city, district or state in India.</p>
         </div>
         <div class="dest-grid" id="dest-grid"></div>
       </div>
@@ -89,7 +88,7 @@
       <div class="section">
         <div class="section-head">
           <h2 class="title">Explore by state</h2>
-          <p class="muted">Open a state to see every district and its major towns.</p>
+          <p class="muted">See every district and major town.</p>
         </div>
         <div class="state-chips" id="state-grid"></div>
       </div>
@@ -97,21 +96,20 @@
       <div class="section">
         <div class="section-head">
           <h2 class="title">Where was this photo taken?</h2>
-          <p class="muted">Pick a photo from your phone. We read its location on your device — the photo itself is not uploaded — and show the exact spot, the town and famous places right around it.</p>
+          <p class="muted">Upload a photo to find where it was taken.</p>
         </div>
         <label class="photo-drop glass" for="photo-input">
           <span class="ficon" aria-hidden="true">◉</span>
-          <span><strong>Choose a photo</strong><small class="muted">JPEG photos from your camera work best</small></span>
+          <span><strong>Choose a photo</strong></span>
           <input id="photo-input" type="file" accept="image/*" />
         </label>
         <div id="photo-result"></div>
       </div>
 
       <div class="section features">
-        <div class="feature glass"><span class="ficon" aria-hidden="true">✦</span><h3>Day-by-day plans</h3><p>Sights clustered by neighbourhood so you spend time exploring, not commuting.</p></div>
-        <div class="feature glass"><span class="ficon" aria-hidden="true">⇄</span><h3>Fare comparison</h3><p>Uber, Ola, Rapido, inDrive &amp; metered autos side by side — cheapest highlighted.</p></div>
-        <div class="feature glass"><span class="ficon" aria-hidden="true">◈</span><h3>Stays for every style</h3><p>From smart hostels to palace hotels, with indicative nightly prices.</p></div>
-        <div class="feature glass"><span class="ficon" aria-hidden="true">⛨</span><h3>Private by design</h3><p>Encrypted sessions, hashed passwords and zero third-party trackers.</p></div>
+        <div class="feature glass"><span class="ficon" aria-hidden="true">✦</span><h3>Day-by-day plans</h3><p>Sights planned area by area for each day.</p></div>
+        <div class="feature glass"><span class="ficon" aria-hidden="true">⇄</span><h3>Fare comparison</h3><p>Compare cab and auto fares across apps.</p></div>
+        <div class="feature glass"><span class="ficon" aria-hidden="true">◈</span><h3>Stays for every style</h3><p>Affordable, comfort and premium rooms.</p></div>
       </div>
     </section>
 
@@ -173,7 +171,6 @@
         <div id="ride-results"></div>
       </div>
 
-      <p class="disclaimer" id="r-disclaimer"></p>
     </section>
 
     <!-- ================= STATE ================= -->
@@ -203,7 +200,7 @@
     <section class="view" data-view="trips" hidden>
       <div class="section-head">
         <h1 class="title">My trips</h1>
-        <p class="muted">Your saved itineraries — only you can see them.</p>
+        <p class="muted">Your saved itineraries.</p>
       </div>
       <div class="trip-list" id="trip-list"></div>
     </section>
@@ -212,7 +209,6 @@
     <section class="view" data-view="admin" hidden>
       <div class="section-head">
         <h1 class="title">Admin console</h1>
-        <p class="muted">Restricted area. Every request is verified server-side.</p>
       </div>
       <div class="stat-grid" id="admin-stats"></div>
       <h2 class="subtitle">Users</h2>
@@ -224,7 +220,7 @@
 
   <footer class="footer">
     <span>© <span id="year"></span> Voyagr</span>
-    <span class="muted">Fares &amp; prices are indicative estimates — verify before booking. Map data © OpenStreetMap contributors · Cities: GeoNames.</span>
+    <span class="muted">Map data © OpenStreetMap contributors</span>
   </footer>
 
   <!-- ================= AUTH DIALOG ================= -->

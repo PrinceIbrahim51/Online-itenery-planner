@@ -28,7 +28,7 @@ export function initPhotoFinder({ api, toast, planPlace }) {
     }
     if (result.nearest) {
       card.append(
-        h('p', {}, `Near ${result.nearest.name}, ${result.nearest.state} (${result.nearest.km} km from the town centre).`),
+        h('p', {}, `Near ${result.nearest.name}, ${result.nearest.state} · ${result.nearest.km} km`),
         h(
           'div',
           { class: 'photo-actions' },
@@ -37,11 +37,11 @@ export function initPhotoFinder({ api, toast, planPlace }) {
         )
       );
     } else if (!result.landmarks?.length) {
-      card.append(h('p', { class: 'muted' }, 'This place is outside India, so we can’t plan a trip there yet.'));
+      card.append(h('p', { class: 'muted' }, 'Outside India.'));
     }
     if (result.nearby?.length) {
       card.append(
-        h('h4', {}, 'Famous places right around it'),
+        h('h4', {}, 'Famous places nearby'),
         h('ul', { class: 'photo-nearby' }, result.nearby.map((n) => h('li', {}, h('a', { href: n.mapsUrl }, n.name), h('span', { class: 'muted' }, ` · ${n.km} km`))))
       );
     }
@@ -54,15 +54,12 @@ export function initPhotoFinder({ api, toast, planPlace }) {
       'div',
       { class: 'photo-card glass' },
       h('p', { class: 'eyebrow' }, 'No location in this photo'),
-      h('p', {}, 'This photo has no GPS data. That’s normal for screenshots and photos shared through WhatsApp or social media, which remove it.')
+      h('p', {}, 'This photo has no location data.')
     );
     if (visionEnabled) {
       card.append(
-        h('p', { class: 'muted' }, 'We can ask Google to recognise a famous landmark in it. A smaller copy without any hidden data is sent once and not stored.'),
         h('button', { type: 'button', class: 'btn btn-gold btn-sm', onClick: () => recognise(file) }, 'Recognise landmark')
       );
-    } else {
-      card.append(h('p', { class: 'muted' }, 'Tip: use the original photo from your camera app, with location turned on in the camera settings.'));
     }
     out.append(card);
   }
@@ -97,7 +94,7 @@ export function initPhotoFinder({ api, toast, planPlace }) {
     }
     if (!gps) return noGps(file);
     if (gps.lat < 6 || gps.lat > 37.5 || gps.lng < 68 || gps.lng > 98) {
-      clear(out).append(h('div', { class: 'photo-card glass' }, h('p', {}, 'This photo was taken outside India — we only plan trips within India for now.')));
+      clear(out).append(h('div', { class: 'photo-card glass' }, h('p', {}, 'This photo was taken outside India.')));
       return;
     }
     try {

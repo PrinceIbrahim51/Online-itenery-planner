@@ -136,8 +136,6 @@ async function loadDestinations() {
   try {
     const data = await api('/destinations');
     state.destinations = data.destinations;
-    if (data.totalCities) $('#city-count').textContent = `${Math.floor(data.totalCities / 100) * 100}+`;
-    if (data.totalDistricts) $('#district-count').textContent = `${Math.floor(data.totalDistricts / 10) * 10}+`;
     clear($('#state-grid')).append(
       ...(data.states || []).map((st) =>
         h('button', { type: 'button', class: 'chip state-chip', onClick: () => (location.hash = `#/state/${st.code}`) }, st.name)
@@ -441,7 +439,7 @@ let planSeq = 0;
 /** Wipes every trace of the previous plan so nothing stale shows while loading. */
 function resetPlanView(loadingText) {
   state.plan = null;
-  for (const id of ['#r-region', '#r-tagline', '#r-disclaimer']) $(id).textContent = '';
+  for (const id of ['#r-region', '#r-tagline']) $(id).textContent = '';
   $('#r-title').textContent = 'Planning your trip…';
   clear($('#r-chips'));
   clear($('#r-estimate'));
@@ -498,36 +496,15 @@ function renderPlan(p) {
     params.start ? h('span', { class: 'chip' }, `${prettyDate(params.start)}${params.days > 1 ? ` – ${prettyDate(addDaysIso(params.start, params.days - 1))}` : ''}`) : null,
     h('span', { class: 'chip green' }, `Best time: ${d.bestTime}`)
   );
-  $('#r-disclaimer').textContent = p.attribution ? `${p.disclaimer} ${p.attribution}.` : p.disclaimer;
   const banner = $('#r-banner');
   const status = d.liveStatus || 'ok';
   banner.hidden = status === 'ok';
-  // Plain-English reason; the raw code stays in the tooltip for troubleshooting.
-  const REASONS = {
-    timeout: 'the free map service was too busy to answer in time',
-    http_504: 'the free map service was too busy to answer in time',
-    http_429: 'the free map service is limiting requests right now',
-    http_503: 'the free map service is temporarily down',
-    http_502: 'the free map service is temporarily down',
-    http_500: 'the free map service had an internal error',
-    network: 'we couldn’t reach the free map service',
-  };
-  const reasonText = d.liveIssue ? REASONS[d.liveIssue] || 'the free map service didn’t respond properly' : '';
-  const reason = reasonText ? ` because ${reasonText}` : '';
   banner.title = d.liveIssue ? `Code: ${d.liveIssue}` : '';
   if (status === 'unavailable') {
-    clear(banner).append(
-      `Live places couldn’t be loaded${reason}, so this plan shows transport, fares and costs only. `,
-      h('a', { href: p.searchLinks.sights }, 'Browse sights on Google Maps ↗'),
-      ' or try again in a minute.'
-    );
+    clear(banner).append('Live places didn’t load. Try again in a minute.');
   } else if (status === 'partial') {
     const missing = (d.failedParts || []).map((x) => ({ sights: 'sights', food: 'restaurants & hotels', hubs: 'station details' })[x]).filter(Boolean);
-    clear(banner).append(
-      `Some live data (${missing.join(', ') || 'details'}) didn’t load${reason}. This isn’t a problem with your search — we’re showing everything we could get. `,
-      ...(d.failedParts?.includes('food') ? [h('a', { href: p.searchLinks.restaurants }, 'Restaurants on Google Maps ↗'), ' · '] : []),
-      'Refresh in a minute for the full plan.'
-    );
+    clear(banner).append(`Some ${missing.join(', ') || 'details'} didn’t load. Refresh in a minute.`);
   }
 
   const e = p.estimate;
@@ -674,7 +651,7 @@ function renderItinerary(p) {
     h(
       'div',
       { class: 'edit-bar' },
-      state.custom ? h('span', { class: 'chip gold' }, 'Customised') : h('span', { class: 'muted' }, 'Suggested plan — make it yours:'),
+      state.custom ? h('span', { class: 'chip gold' }, 'Customised') : h('span', { class: 'muted' }, 'Suggested plan'),
       h(
         'button',
         { type: 'button', class: `btn btn-sm ${state.editing ? 'btn-gold' : 'btn-ghost'}`, onClick: () => { state.editing = !state.editing; renderItinerary(p); } },
@@ -746,7 +723,7 @@ function renderItinerary(p) {
     } else if (base.note && !state.custom) {
       card.append(h('p', { class: 'stop-blurb' }, base.note));
     } else if (state.editing) {
-      card.append(h('p', { class: 'muted' }, 'No stops yet — add one below.'));
+      card.append(h('p', { class: 'muted' }, 'No stops yet.'));
     }
 
     if (state.editing) card.append(addStopControls(p, days, i, used));
@@ -799,7 +776,7 @@ function stopControls(days, i, j) {
 function addStopControls(p, days, i, used) {
   const available = p.attractions.filter((a) => !used.has(a.name));
   const pick = h('select', { 'aria-label': 'Add a sight' }, h('option', { value: '' }, available.length ? 'Add a sight…' : 'All sights are in your plan'), available.map((a) => h('option', { value: a.name }, `${a.name} · ${a.category}`)));
-  const own = h('input', { maxlength: 90, placeholder: 'Or add your own stop (e.g. Shopping at T. Nagar)', 'aria-label': 'Add your own stop' });
+  const own = h('input', { maxlength: 90, placeholder: 'Add your own stop', 'aria-label': 'Add your own stop' });
   const note = h('input', { maxlength: 200, placeholder: 'Note (optional)', 'aria-label': 'Note for the new stop' });
   return h(
     'div',
@@ -825,7 +802,7 @@ function addStopControls(p, days, i, used) {
 function renderSights(p) {
   const panel = clear($('[data-panel="sights"]'));
   if (!p.attractions.length) {
-    panel.append(emptyWithLink('No sights found in map data for this place yet.', p.searchLinks.sights, 'Search attractions on Google Maps ↗'));
+    panel.append(emptyWithLink('No sights listed.', p.searchLinks.sights, 'Search Google Maps ↗'));
     return;
   }
   panel.append(
@@ -862,7 +839,7 @@ function filterChips(current, onPick, counts) {
 function renderFood(p) {
   const panel = clear($('[data-panel="food"]'));
   if (!p.restaurants.length) {
-    put(panel, emptyWithLink('No restaurants found in map data near the centre.', p.searchLinks.restaurants, 'Find restaurants on Google Maps ↗'));
+    put(panel, emptyWithLink('No restaurants listed.', p.searchLinks.restaurants, 'Search Google Maps ↗'));
     return;
   }
   const counts = { all: p.restaurants.length, budget: 0, comfort: 0, premium: 0 };
@@ -870,16 +847,12 @@ function renderFood(p) {
   const anyTier = counts.budget + counts.comfort + counts.premium > 0;
   const filter = state.foodFilter ?? (anyTier && counts[p.params.budget] ? p.params.budget : 'all');
   const shown = filter === 'all' ? p.restaurants : p.restaurants.filter((r) => r.tier === filter);
-  const unknown = p.restaurants.filter((r) => !r.tier).length;
 
   put(panel, 
     filterChips(filter, (v) => { state.foodFilter = v; renderFood(p); }, counts),
-    filter !== 'all' && unknown ? h('p', { class: 'muted' }, `${unknown} more place${unknown > 1 ? 's' : ''} don’t list a price level — see “All”.`) : null,
-    !anyTier ? h('p', { class: 'muted' }, 'Price levels aren’t available for these live listings, so all places are shown.') : null,
-    p.restaurantSource === 'openstreetmap' ? h('p', { class: 'muted' }, 'Opening hours come from OpenStreetMap where listed — always confirm before visiting.') : null,
     shown.length
       ? h('div', { class: 'card-grid' }, shown.map(restaurantCard))
-      : h('div', { class: 'empty glass' }, 'No restaurants in this price style here — try “All”.')
+      : h('div', { class: 'empty glass' }, 'None in this style — try “All”.')
   );
 }
 
@@ -959,7 +932,7 @@ function renderStays(p) {
   );
   if (!panel.querySelector('.card')) {
     panel.insertBefore(
-      counts.all ? h('div', { class: 'empty glass' }, 'No stays in this price style here — try “All”.') : emptyWithLink('No hotels found in map data for this place yet.', p.searchLinks.stays, 'Find hotels on Google Maps ↗'),
+      counts.all ? h('div', { class: 'empty glass' }, 'None in this style — try “All”.') : emptyWithLink('No hotels listed.', p.searchLinks.stays, 'Search Google Maps ↗'),
       panel.children[1] || null
     );
   }
@@ -974,13 +947,12 @@ function renderPhotos(p) {
         'section',
         { class: 'list-card glass' },
         h('h3', {}, '📸 Golden hour on your trip'),
-        h('p', { class: 'muted' }, 'The soft, warm light just after sunrise and before sunset is best for photos.'),
         h('ul', {}, golden.map((d) => h('li', {}, h('div', { class: 'row' }, h('strong', {}, `Day ${d.day} · ${prettyDate(d.date)}`), h('span', { class: 'rating' }, `${d.sun.goldenMorning}  ·  ${d.sun.goldenEvening}`)))))
       )
     );
   }
   if (!p.photoSpots.length) {
-    put(panel, emptyWithLink('No photo spots found for this place yet.', p.searchLinks.sights, 'Browse sights on Google Maps ↗'));
+    put(panel, emptyWithLink('No photo spots listed.', p.searchLinks.sights, 'Search Google Maps ↗'));
     return;
   }
   put(panel, 
@@ -1031,14 +1003,13 @@ function renderAdvice(p) {
 function renderNight(p) {
   const panel = clear($('[data-panel="night"]'));
   if (p.events.dryState) {
-    put(panel, h('p', { class: 'banner glass' }, `${p.destination.region} has prohibition laws — bars and alcohol are banned or tightly restricted here.`));
+    put(panel, h('p', { class: 'banner glass' }, `Alcohol is restricted in ${p.destination.region}.`));
   }
   put(panel, 
     h(
       'section',
       { class: 'list-card glass' },
       h('h3', {}, '🎉 Events & parties on your dates'),
-      h('p', { class: 'muted' }, 'No ticketing platform in India offers a public events feed, so these open live listings for your dates.'),
       h('ul', {}, p.events.links.map((l) => h('li', {}, h('a', { href: l.url }, `${l.label} ↗`))))
     )
   );
@@ -1053,8 +1024,6 @@ function renderNight(p) {
         )
       )
     );
-  } else if (!p.events.dryState) {
-    put(panel, emptyWithLink('No bars or clubs found in map data near the centre.', p.events.links[p.events.links.length - 1].url, 'Search nightlife on Google Maps ↗'));
   }
 }
 
@@ -1127,7 +1096,7 @@ async function compareRide() {
 
 function renderFareTable(cmp) {
   const results = clear($('#ride-results'));
-  results.append(h('p', { class: 'ride-summary' }, `Estimated for ${cmp.distanceKm} km · ~${cmp.durationMin} min in typical traffic. Range shows normal → peak/surge pricing.`));
+  results.append(h('p', { class: 'ride-summary' }, `${cmp.distanceKm} km · ~${cmp.durationMin} min · normal → peak fare`));
   const max = Math.max(...cmp.groups.flatMap((g) => g.options.map((o) => o.high)), 1);
   for (const g of cmp.groups) {
     results.append(
@@ -1165,7 +1134,7 @@ async function loadTrips() {
     const { trips } = await api('/trips');
     clear(listEl);
     if (!trips.length) {
-      listEl.append(h('div', { class: 'empty glass' }, 'No saved trips yet — plan one and tap “Save trip”.'));
+      listEl.append(h('div', { class: 'empty glass' }, 'No saved trips yet.'));
       return;
     }
     for (const t of trips) {
