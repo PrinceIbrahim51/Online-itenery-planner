@@ -282,7 +282,11 @@ test('search: typos, transliterations, old names, districts and states', () => {
   assert.equal(top('Hydrabad').slug, 'hyderabad');
   assert.equal(top('Orissa').type, 'state');
   assert.equal(top('tamilnadu').code, 'TN');
-  assert.equal(top('Tenkasi').type, 'district');
+  assert.equal(top('Tenkasi').slug, 'tenkasi', 'district HQ town');
+  assert.equal(top('Thenkasi').slug, 'tenkasi', 'GeoNames spelling still finds it');
+  assert.equal(top('Theni').slug, 'theni');
+  assert.equal(top('Thane').slug, 'thane');
+  assert.equal(top('Ranipet').type, 'district');
   assert.equal(top('Nilgiris').type, 'district');
   assert.equal(india.search('Hydrabad', 5, cur).exact, false, 'typo corrections are flagged as "did you mean"');
   assert.equal(india.search('Chennai', 5, cur).exact, true);

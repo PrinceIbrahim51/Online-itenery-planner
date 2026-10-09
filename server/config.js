@@ -32,6 +32,8 @@ const schema = z.object({
   SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(24 * 7).default(12),
   COOKIE_SECURE: bool('true'),
   OPENTRIPMAP_API_KEY: z.string().default(''),
+  GOOGLE_PLACES_API_KEY: z.string().max(200).default(''),
+  GOOGLE_VISION_API_KEY: z.string().max(200).default(''),
 });
 
 function loadConfig(env = process.env) {
@@ -85,6 +87,8 @@ function loadConfig(env = process.env) {
     sessionTtlMs: c.SESSION_TTL_HOURS * 60 * 60 * 1000,
     cookieSecure: c.COOKIE_SECURE,
     openTripMapKey: c.OPENTRIPMAP_API_KEY,
+    googlePlacesKey: c.GOOGLE_PLACES_API_KEY,
+    googleVisionKey: c.GOOGLE_VISION_API_KEY,
   });
 }
 

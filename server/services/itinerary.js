@@ -2,6 +2,13 @@
 
 const { compareFares, cheapestFor } = require('./fares');
 const { haversineKm } = require('./geo');
+const { isOpenAt, hoursOn, describe, weekdayIndex, DAY_LABEL } = require('./hours');
+const { sunTimes } = require('./sun');
+const { todayIst, addDays } = require('./weather');
+const { DRY_STATES } = require('./advice');
+
+const LUNCH_MIN = 13 * 60;
+const DINNER_MIN = 20 * 60;
 
 const DAY_HOURS = 8;
 const ROAD_FACTOR = 1.35; // straight-line → road distance
@@ -63,22 +70,53 @@ function planDays(attractions, days) {
   return plan;
 }
 
-function pickRestaurant(restaurants, near, budget, used) {
-  if (!restaurants.length) return null;
+/**
+ * Best restaurant for a meal: right price style, close to the day's route, not used
+ * yet — and never one that is temporarily closed or known to be shut at that time.
+ */
+function pickRestaurant(restaurants, near, budget, used, when) {
+  const usable = restaurants.filter((r) => !r.status);
+  const openThen = when ? usable.filter((r) => isOpenAt(r.week, when.dayIndex, when.minute) !== false) : usable;
+  const pool = openThen.length ? openThen : [];
+  if (!pool.length) return null;
   const prefs = TIER_PREFS[budget];
   const cost = (r) => {
     const tierPenalty = r.tier ? prefs.indexOf(r.tier) * 4 : 2;
     const distance = near ? roadKm(near, r) : 0;
     const repeat = used.has(r.name) ? 50 : 0;
-    return tierPenalty + distance + repeat - score(r);
+    const known = r.week ? -1 : 0; // prefer places whose hours we can confirm
+    return tierPenalty + distance + repeat + known - score(r);
   };
-  const best = [...restaurants].sort((a, b) => cost(a) - cost(b))[0];
+  const best = [...pool].sort((a, b) => cost(a) - cost(b))[0];
   used.add(best.name);
-  return best;
+  const { week, rank, ...rest } = best;
+  const open = when ? isOpenAt(week, when.dayIndex, when.minute) : null;
+  return { ...rest, openAtMeal: open, hoursThatDay: when ? hoursOn(week, when.dayIndex) : null };
 }
 
-function generateItinerary(dest, { days, travelers, budget }) {
+const PHOTO_WEIGHT = { Viewpoint: 5, Beach: 4, Heritage: 4, Nature: 4, Landmark: 3, Garden: 2, Spiritual: 2, Museum: 1, Experience: 1, Market: 2 };
+const PHOTO_TIP = {
+  Viewpoint: 'Best at golden hour — arrive 30 minutes before sunset for the colours.',
+  Beach: 'Golden-hour silhouettes and reflections; early mornings are calm and empty.',
+  Heritage: 'Go at opening time for soft light and frames without crowds.',
+  Nature: 'Morning light is softest; keep a cover for your lens near water spray.',
+  Landmark: 'Try the blue hour just after sunset, when it is lit up.',
+  Garden: 'Early morning for dew, flowers and fewer people.',
+  Spiritual: 'Photography is often restricted inside — shoot the exterior, and ask first.',
+  Market: 'Colourful street shots in late afternoon; ask before photographing people.',
+  Museum: 'Check the camera rules at the ticket counter.',
+  Experience: 'Check the camera rules at the entrance.',
+};
+
+function generateItinerary(dest, { days, travelers, budget, start }) {
   const city = dest.name;
+  const startDate = start || todayIst();
+  const [cLat, cLng] = dest.center || [dest.attractions[0]?.lat ?? 22, dest.attractions[0]?.lng ?? 79];
+  const dayInfo = (d) => {
+    const date = addDays(startDate, d);
+    const dayIndex = weekdayIndex(date);
+    return { date, dayIndex, weekday: DAY_LABEL[dayIndex], sun: sunTimes(cLat, cLng, date) };
+  };
   const dayGroups = planDays(dest.attractions, days);
   const usedRestaurants = new Set();
   const dayTrips = [...(dest.dayTrips || [])];
@@ -88,11 +126,15 @@ function generateItinerary(dest, { days, travelers, budget }) {
   const itinerary = [];
   for (let d = 0; d < days; d++) {
     const stops = dayGroups[d];
+    const info = dayInfo(d);
+    const lunchAt = { dayIndex: info.dayIndex, minute: LUNCH_MIN };
+    const dinnerAt = { dayIndex: info.dayIndex, minute: DINNER_MIN };
     if (!stops) {
       // With no sights at all (e.g. live data unavailable), spend day 1 in the city itself.
       const trip = d === 0 && dayGroups.length === 0 ? null : dayTrips.shift();
       itinerary.push({
         day: d + 1,
+        ...info,
         theme: trip ? `Day trip: ${trip.name}` : d === 0 ? `Discover ${city}` : 'Leisure & local discoveries',
         stops: [],
         dayTrip: trip || null,
@@ -102,8 +144,8 @@ function generateItinerary(dest, { days, travelers, budget }) {
             ? `Explore ${city} on foot: the old market, a local temple or landmark, and street food — ask your hotel for tips.`
             : 'Revisit a favourite spot, try a cooking class or spa, and shop for souvenirs.',
         meals: {
-          lunch: pickRestaurant(dest.restaurants, null, budget, usedRestaurants),
-          dinner: pickRestaurant(dest.restaurants, null, budget, usedRestaurants),
+          lunch: pickRestaurant(dest.restaurants, null, budget, usedRestaurants, lunchAt),
+          dinner: pickRestaurant(dest.restaurants, null, budget, usedRestaurants, dinnerAt),
         },
       });
       continue;
@@ -120,13 +162,14 @@ function generateItinerary(dest, { days, travelers, budget }) {
     const areas = [...new Set(stops.map((s) => s.area))];
     itinerary.push({
       day: d + 1,
+      ...info,
       theme: areas.slice(0, 2).join(' & ') || city,
       stops: enriched,
       dayTrip: null,
       note: null,
       meals: {
-        lunch: pickRestaurant(dest.restaurants, mid, budget, usedRestaurants),
-        dinner: pickRestaurant(dest.restaurants, stops[stops.length - 1], budget, usedRestaurants),
+        lunch: pickRestaurant(dest.restaurants, mid, budget, usedRestaurants, lunchAt),
+        dinner: pickRestaurant(dest.restaurants, stops[stops.length - 1], budget, usedRestaurants, dinnerAt),
       },
     });
   }
@@ -154,6 +197,55 @@ function generateItinerary(dest, { days, travelers, budget }) {
   const region = dest.region ? `, ${dest.region}` : '';
   const mapsSearch = (what) => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${what} in ${city}${region}`)}`;
   const tierRank = (r) => (r.tier ? TIER_PREFS[budget].indexOf(r.tier) : 1);
+  const tripDays = itinerary.map((x) => ({ day: x.day, date: x.date, dayIndex: x.dayIndex, weekday: x.weekday }));
+  const googleSearch = (q) => `https://www.google.com/search?q=${encodeURIComponent(q)}`;
+
+  // Restaurants: hours, closure status, which trip days they're shut, and how to reserve.
+  const restaurants = [...dest.restaurants]
+    .sort((a, b) => tierRank(a) - tierRank(b) || score(b) - score(a))
+    .map(({ week, rank, ...r }) => {
+      const mapsUrl = mapsLink(r.name, r.area, city);
+      return {
+        ...r,
+        mapsUrl,
+        hoursText: describe(week) || r.rawHours || null,
+        closedOnTripDays: week ? tripDays.filter((t) => week[t.dayIndex]?.length === 0).map((t) => `Day ${t.day} (${t.weekday})`) : [],
+        reserve: {
+          call: r.phone ? `tel:${r.phone}` : null,
+          google: r.googleMapsUri || null,
+          googleReservable: Boolean(r.reservable),
+          search: googleSearch(`reserve a table ${r.name} ${city}`),
+        },
+      };
+    });
+
+  // Photo spots: scenic categories first, notable places break ties.
+  const photoSpots = dest.attractions
+    .filter((a) => PHOTO_WEIGHT[a.category])
+    .map((a) => ({ a, w: PHOTO_WEIGHT[a.category] + (a.notable || (a.rating ?? 0) >= 4.5 ? 1 : 0) + (score(a) > 0 ? Math.min(score(a), 5) / 10 : 0) }))
+    .sort((x, y) => y.w - x.w)
+    .slice(0, 8)
+    .map(({ a }) => ({
+      name: a.name,
+      area: a.area,
+      category: a.category,
+      tip: PHOTO_TIP[a.category],
+      mapsUrl: mapsLink(a.name, a.area, city),
+    }));
+
+  // Nightlife & events (no free events API covers India, so we link out honestly).
+  const dry = DRY_STATES.has(dest.region);
+  const nightlife = (dest.nightlife || []).map((n) => ({ ...n, mapsUrl: mapsLink(n.name, n.area, city) }));
+  const firstDate = itinerary[0]?.date || startDate;
+  const lastDate = itinerary[itinerary.length - 1]?.date || startDate;
+  const events = {
+    dryState: dry,
+    links: [
+      { label: `Events in ${city} on BookMyShow`, url: `https://in.bookmyshow.com/explore/events-${city.toLowerCase().replace(/ district$/, '').replace(/[^a-z0-9]+/g, '-')}` },
+      { label: `Search events ${firstDate === lastDate ? `on ${firstDate}` : `from ${firstDate} to ${lastDate}`}`, url: googleSearch(`events in ${city} ${firstDate}${firstDate === lastDate ? '' : ` to ${lastDate}`}`) },
+      { label: 'Nightlife & live music nearby', url: mapsSearch('live music bars pubs') },
+    ],
+  };
 
   return {
     destination: {
@@ -164,10 +256,14 @@ function generateItinerary(dest, { days, travelers, budget }) {
       bestTime: dest.bestTime,
       source: dest.source || 'curated',
     },
-    params: { days, travelers, budget, nights, rooms },
+    params: { days, travelers, budget, nights, rooms, start: startDate },
     itinerary,
     attractions: withMaps([...dest.attractions].sort((a, b) => score(b) - score(a))),
-    restaurants: withMaps([...dest.restaurants].sort((a, b) => tierRank(a) - tierRank(b) || score(b) - score(a))),
+    restaurants,
+    restaurantSource: dest.restaurantSource || (dest.source === 'live' ? 'openstreetmap' : 'curated'),
+    photoSpots,
+    nightlife,
+    events,
     stays: {
       affordable: withMaps(dest.stays.filter((s) => s.tier === 'budget')),
       comfort: withMaps(dest.stays.filter((s) => s.tier === 'comfort')),

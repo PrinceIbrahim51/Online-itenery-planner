@@ -19,9 +19,10 @@ const fold = (s) =>
     .trim();
 
 function soundKey(s) {
-  let k = fold(s).replace(/[^a-z]/g, '');
+  // Drop a leading article only as a separate word ("The Nilgiris"), never inside a name
+  // (Thenkasi, Theni, Thane, Thekkady must keep their "th").
+  let k = fold(s).replace(/^the\s+/, '').replace(/[^a-z]/g, '');
   k = k
-    .replace(/^the/, '') // "The Nilgiris"
     .replace(/([bdgjkpt])h/g, '$1') // aspirates: th→t, dh→d, bh→b, kh→k …
     .replace(/sh/g, 's')
     .replace(/ph/g, 'f')

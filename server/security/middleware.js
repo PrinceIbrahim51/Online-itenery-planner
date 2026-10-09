@@ -62,8 +62,12 @@ function csrfProtection(req, _res, next) {
 }
 
 /** Only accept JSON bodies on write requests (blocks form-encoded CSRF/content-sniffing tricks). */
+const IMAGE_UPLOAD_PATHS = new Set(['/photo/landmark']);
+
 function requireJson(req, _res, next) {
   if (SAFE_METHODS.has(req.method) || req.method === 'DELETE') return next();
+  // The single image-upload endpoint accepts raw images instead of JSON.
+  if (IMAGE_UPLOAD_PATHS.has(req.path) && req.is(['image/jpeg', 'image/png', 'image/webp'])) return next();
   if (!req.is('application/json')) return next(new HttpError(415, 'Content-Type must be application/json.'));
   next();
 }

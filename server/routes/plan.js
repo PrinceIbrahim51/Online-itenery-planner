@@ -8,6 +8,19 @@ const { compareFares } = require('../services/fares');
 const india = require('../services/india');
 const { HttpError, validate } = require('../security/middleware');
 const { slug, intIn, safeText } = require('../security/sanitize');
+const { buildAdvice } = require('../services/advice');
+const { todayIst, addDays } = require('../services/weather');
+
+/** Trip start date: a real calendar date from yesterday up to one year ahead. */
+const startDate = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'must be a date (YYYY-MM-DD)')
+  .refine((v) => {
+    const d = new Date(`${v}T00:00:00Z`);
+    if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== v) return false;
+    const today = todayIst();
+    return v >= addDays(today, -1) && v <= addDays(today, 366);
+  }, 'must be a valid date within the next year');
 
 const planQuery = z
   .object({
@@ -15,6 +28,7 @@ const planQuery = z
     days: intIn(1, 14).default(3),
     travelers: intIn(1, 12).default(2),
     budget: z.enum(['budget', 'comfort', 'premium']).default('comfort'),
+    start: startDate.optional(),
   })
   .strict();
 
@@ -31,9 +45,9 @@ const stateParam = z.object({ code: z.string().regex(/^[A-Za-z]{2}$/, 'must be a
 // Public, user-independent responses can be cached by the CDN.
 const PUBLIC_CACHE = 'public, max-age=300, s-maxage=21600, stale-while-revalidate=86400';
 
-const EMPTY_PLACES = () => ({ sights: [], food: [], stays: [], rail: [], bus: [], failed: [], issue: null });
+const EMPTY_PLACES = () => ({ sights: [], food: [], stays: [], rail: [], bus: [], night: [], google: [], failed: [], issue: null });
 
-function planRouter({ openTripMap, overpass, wikipedia, logger, planLimiter = (_q, _s, n) => n() }) {
+function planRouter({ openTripMap, overpass, wikipedia, googlePlaces, weather, logger, planLimiter = (_q, _s, n) => n() }) {
   const router = express.Router();
   const curatedSlugs = new Set(destinations.map((d) => d.slug));
   india.registerFeatured(destinations);
@@ -61,11 +75,14 @@ function planRouter({ openTripMap, overpass, wikipedia, logger, planLimiter = (_
     const city = india.getCity(key) || india.getDistrict(key) || (state?.capital ? india.getCity(state.capital) : null);
     if (city) {
       // OpenStreetMap and Wikipedia are queried in parallel; each covers for the other.
-      const [osmResult, wikiResult] = await Promise.allSettled([
+      const [osmResult, wikiResult, googleResult] = await Promise.allSettled([
         overpass
           ? overpass.placesAround(city.slug, city.lat, city.lng, india.searchRadius(city))
           : Promise.reject(Object.assign(new Error('disabled'), { code: 'disabled' })),
         wikipedia ? wikipedia.placesAround(city.slug, city.lat, city.lng, city.name) : Promise.resolve({ sights: [], rail: [] }),
+        googlePlaces
+          ? googlePlaces.restaurantsNear(city.slug, city.lat, city.lng, Math.min(india.searchRadius(city) * 0.5, 4000))
+          : Promise.resolve([]),
       ]);
 
       const places =
@@ -77,6 +94,10 @@ function planRouter({ openTripMap, overpass, wikipedia, logger, planLimiter = (_
       }
 
       const wiki = wikiResult.status === 'fulfilled' ? wikiResult.value : { sights: [], rail: [] };
+      if (googleResult.status === 'fulfilled') places.google = googleResult.value;
+      else logger.warn(`Google Places failed for ${city.slug}: ${googleResult.reason?.message}`);
+      // With Google restaurants in hand, a failed OSM food lookup no longer matters.
+      if (places.google.length) places.failed = places.failed.filter((x) => x !== 'food');
       if (wikiResult.status === 'rejected') logger.warn(`Wikipedia failed for ${city.slug}: ${wikiResult.reason?.message}`);
 
       const known = new Set(places.sights.map((x) => x.name.toLowerCase()));
@@ -141,6 +162,25 @@ function planRouter({ openTripMap, overpass, wikipedia, logger, planLimiter = (_
     const dest = await resolve(q.destination);
     if (!dest) throw new HttpError(404, 'We couldn’t find that place. Try another Indian city or town.');
     const plan = generateItinerary(dest, q);
+
+    // Weather (forecast within ~2 weeks, else elevation + seasonal rules) → packing, dos & don'ts.
+    let wx = null;
+    if (weather && dest.center) {
+      try {
+        wx = await weather.forecast(dest.center[0], dest.center[1], plan.params.start, q.days);
+      } catch (err) {
+        logger.warn(`Weather failed for ${dest.slug}: ${err.message}`);
+      }
+    }
+    plan.advice = buildAdvice({
+      state: dest.region,
+      start: plan.params.start,
+      days: q.days,
+      weather: wx,
+      categories: plan.attractions.map((a) => a.category),
+      tier: india.tierOf(dest.population || 0),
+      metro: (dest.avgSpeedKmh ?? 30) <= 18,
+    });
     plan.destination.degraded = Boolean(dest.degraded);
     plan.destination.liveStatus = dest.liveStatus || 'ok';
     plan.destination.liveIssue = dest.liveIssue || null;

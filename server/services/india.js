@@ -6,6 +6,7 @@ const districts = require('../data/india-districts.json');
 const states = require('../data/india-states.json');
 const { haversineKm } = require('./geo');
 const { fold, soundKey, distance, tolerance } = require('./fuzzy');
+const { parseOpeningHours, describe, closureFromTags } = require('./hours');
 
 /**
  * Every Indian city/town (GeoNames, pop ≥ 1,000, plus popular tourist towns):
@@ -175,6 +176,35 @@ function getState(codeOrSlug) {
 }
 
 const getStateBySlug = (slug) => statesBySlug.get(slug) || null;
+
+/**
+ * The town a point belongs to (for photo locations). Big cities win over tiny
+ * neighbours whose centre happens to be closer (Gateway of India → Mumbai, not Uran).
+ */
+function nearestCity(lat, lng) {
+  let best = null;
+  let bestScore = -Infinity;
+  let nearest = null;
+  let nearestKm = Infinity;
+  for (const c of cities) {
+    if (Math.abs(c.lat - lat) > 1.5 || Math.abs(c.lng - lng) > 1.5) continue;
+    const km = haversineKm({ lat, lng }, c);
+    if (km < nearestKm) {
+      nearestKm = km;
+      nearest = c;
+    }
+    if (km <= 30) {
+      const sc = c.pop / (km + 2) ** 2;
+      if (sc > bestScore) {
+        bestScore = sc;
+        best = c;
+      }
+    }
+  }
+  const pick = best || nearest;
+  if (!pick) return null;
+  return { slug: pick.slug, name: pick.name, state: pick.state, km: Math.round(haversineKm({ lat, lng }, pick) * 10) / 10 };
+}
 const listStates = () => states.map((st) => ({ code: st.code, name: st.name })).sort((a, b) => a.name.localeCompare(b.name));
 
 // ----------------------------------------------------------------------------
@@ -299,21 +329,63 @@ function toDestination(city, places, curatedSlugs = new Set()) {
     .sort((a, b) => b.rank - a.rank)
     .slice(0, 24);
 
-  const restaurants = places.food
+  // Google Places (optional, more reliable) wins over OpenStreetMap when available.
+  const fromGoogle = (places.google || []).map((g, i) => ({
+    name: g.name,
+    area: g.area || city.name,
+    cuisine: g.cuisine,
+    tier: g.tier,
+    costForTwo: null,
+    rating: g.rating,
+    ratingCount: g.ratingCount,
+    rank: 30 - i, // Google already ranks by popularity
+    mustTry: null,
+    lat: g.lat,
+    lng: g.lng,
+    week: g.week,
+    status: g.status,
+    phone: g.phone,
+    reservable: g.reservable,
+    googleMapsUri: g.googleMapsUri,
+    hoursSource: g.week ? 'google' : null,
+  }));
+  const fromOsm = places.food
+    .map((p) => {
+      const status = closureFromTags(p.tags);
+      return {
+        name: p.name,
+        area: area(p),
+        cuisine: p.tags.cuisine ? p.tags.cuisine.replace(/[_;]/g, (m) => (m === ';' ? ', ' : ' ')) : p.tags.amenity === 'cafe' ? 'Café' : 'Local cuisine',
+        tier: null,
+        costForTwo: null,
+        rating: null,
+        rank: (p.notable ? 2 : 0) + (p.tags.cuisine ? 0.5 : 0) + (p.hours ? 0.5 : 0) - (status ? 5 : 0),
+        mustTry: null,
+        lat: p.lat,
+        lng: p.lng,
+        week: parseOpeningHours(p.hours),
+        rawHours: p.hours,
+        status,
+        phone: p.tags.phone,
+        reservable: false,
+        hoursSource: p.hours ? 'openstreetmap' : null,
+      };
+    })
+    .filter((r) => r.status !== 'permanently_closed');
+  const restaurants = (fromGoogle.length ? fromGoogle : fromOsm).sort((a, b) => b.rank - a.rank).slice(0, 18);
+
+  const nightlife = (places.night || [])
     .map((p) => ({
       name: p.name,
+      kind: { bar: 'Bar', pub: 'Pub', nightclub: 'Nightclub', biergarten: 'Beer garden' }[p.tags.amenity] || 'Bar',
       area: area(p),
-      cuisine: p.tags.cuisine ? p.tags.cuisine.replace(/[_;]/g, (m) => (m === ';' ? ', ' : ' ')) : p.tags.amenity === 'cafe' ? 'Café' : 'Local cuisine',
-      tier: null,
-      costForTwo: null,
-      rating: null,
-      rank: (p.notable ? 2 : 0) + (p.tags.cuisine ? 0.5 : 0) + (p.hours ? 0.3 : 0),
-      mustTry: null,
       lat: p.lat,
       lng: p.lng,
+      hoursText: describe(parseOpeningHours(p.hours)) || p.hours || null,
+      km: Math.round(haversineKm(center, p) * 10) / 10,
     }))
-    .sort((a, b) => b.rank - a.rank)
-    .slice(0, 18);
+    .sort((a, b) => a.km - b.km)
+    .slice(0, 12);
 
   const prices = STAY_PRICE[tier];
   const stays = places.stays
@@ -408,6 +480,8 @@ function toDestination(city, places, curatedSlugs = new Set()) {
     autoMeter: hill ? null : { base: meter[0], baseKm: meter[1], perKm: meter[2] },
     cabApps: apps,
     dayTrips,
+    nightlife,
+    restaurantSource: fromGoogle.length ? 'google' : 'openstreetmap',
     source: 'live',
   };
 }
@@ -426,6 +500,7 @@ module.exports = {
   getState,
   getStateBySlug,
   listStates,
+  nearestCity,
   toDestination,
   searchRadius,
   tierOf,

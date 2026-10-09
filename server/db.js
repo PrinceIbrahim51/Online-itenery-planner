@@ -116,6 +116,10 @@ function openSqlite(file) {
     }
   }
   db.exec(SQLITE_SCHEMA);
+  // Migrations: add columns introduced after the first release (idempotent).
+  const tripCols = new Set(db.prepare('PRAGMA table_info(trips)').all().map((c) => c.name));
+  if (!tripCols.has('start_date')) db.exec('ALTER TABLE trips ADD COLUMN start_date TEXT');
+  if (!tripCols.has('custom')) db.exec('ALTER TABLE trips ADD COLUMN custom TEXT');
   const cache = new Map();
   const stmt = (sql) => {
     let s = cache.get(sql);
@@ -162,7 +166,9 @@ function openPostgres(url) {
   pool.on('error', () => {
     /* idle client errors are retried on next query */
   });
-  const ready = pool.query(PG_SCHEMA);
+  const ready = pool
+    .query(PG_SCHEMA)
+    .then(() => pool.query('ALTER TABLE trips ADD COLUMN IF NOT EXISTS start_date TEXT; ALTER TABLE trips ADD COLUMN IF NOT EXISTS custom TEXT;'));
   ready.catch(() => {});
   const q = async (sql, params) => {
     await ready;

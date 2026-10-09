@@ -64,7 +64,9 @@ out tags center 160;`,
 nwr(around:${food},${c})["amenity"~"^(restaurant|cafe)$"]["name"];
 out tags center 120;
 nwr(around:${stays},${c})["tourism"~"^(hotel|guest_house|hostel|resort|motel)$"]["name"];
-out tags center 120;`,
+out tags center 120;
+nwr(around:${int(Math.min(radius * 0.6, 5000))},${c})["amenity"~"^(bar|pub|nightclub|biergarten)$"]["name"];
+out tags center 40;`,
     hubs: `${head}
 node(around:${wide},${c})["railway"="station"]["name"]["station"!~"subway|light_rail|monorail"];
 out tags 30;
@@ -78,13 +80,23 @@ function classify(tags) {
   if (/^(hotel|guest_house|hostel|resort|motel|apartment)$/.test(tags.tourism || '')) return 'stay';
   if (tags.railway === 'station') return 'rail';
   if (tags.amenity === 'bus_station') return 'bus';
+  if (/^(bar|pub|nightclub|biergarten)$/.test(tags.amenity || '')) return 'night';
   return 'sight';
 }
 
-const BUCKET = { sight: 'sights', food: 'food', stay: 'stays', rail: 'rail', bus: 'bus' };
+const BUCKET = { sight: 'sights', food: 'food', stay: 'stays', rail: 'rail', bus: 'bus', night: 'night' };
+
+/** Digits-only phone number (first one listed), or null. */
+function phoneOf(tags) {
+  const raw = tags.phone || tags['contact:phone'] || tags['contact:mobile'];
+  if (!raw) return null;
+  const first = String(raw).split(/[;,]/)[0];
+  const cleaned = first.replace(/[^\d+]/g, '');
+  return /^\+?\d{6,15}$/.test(cleaned) ? cleaned : null;
+}
 
 function normalise(raw) {
-  const out = { sights: [], food: [], stays: [], rail: [], bus: [] };
+  const out = { sights: [], food: [], stays: [], rail: [], bus: [], night: [] };
   const seen = new Set();
   for (const item of raw) {
     const parsed = elementSchema.safeParse(item);
@@ -120,6 +132,9 @@ function normalise(raw) {
         fee: pick('fee', 30),
         suburb: pick('addr:suburb', 60) || pick('addr:city', 60),
         description: pick('description', 200),
+        note: pick('note', 200),
+        opening_hours: pick('opening_hours', 200),
+        phone: phoneOf(tags),
       },
     });
   }
@@ -186,7 +201,7 @@ function createOverpass({ fetchImpl = fetch, endpoints = ENDPOINTS, logger } = {
   async function fetchAll(lat, lng, radius) {
     const queries = buildQueries(lat, lng, radius);
     const settled = await Promise.allSettled(PARTS.map((p, i) => query(queries[p], i)));
-    const merged = { sights: [], food: [], stays: [], rail: [], bus: [] };
+    const merged = { sights: [], food: [], stays: [], rail: [], bus: [], night: [] };
     const failed = [];
     const diagnostics = [];
     let issue = null;

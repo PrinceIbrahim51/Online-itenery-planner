@@ -24,6 +24,10 @@ const { adminRouter } = require('./routes/admin');
 const { createOpenTripMap } = require('./services/opentripmap');
 const { createOverpass } = require('./services/overpass');
 const { createWikipedia } = require('./services/wikipedia');
+const { createWeather } = require('./services/weather');
+const { createGooglePlaces } = require('./services/googlePlaces');
+const { createVision } = require('./services/vision');
+const { photoRouter } = require('./routes/photo');
 
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 
@@ -36,7 +40,7 @@ function createLogger(config) {
   };
 }
 
-function createApp(config, { db, openTripMap, overpass, wikipedia } = {}) {
+function createApp(config, { db, openTripMap, overpass, wikipedia, weather, googlePlaces, vision } = {}) {
   const logger = createLogger(config);
   // Accounts need persistent storage; without it (e.g. Vercel with no DATABASE_URL) the
   // planner still works and every account route answers 503.
@@ -45,6 +49,10 @@ function createApp(config, { db, openTripMap, overpass, wikipedia } = {}) {
   const otm = openTripMap ?? (config.openTripMapKey ? createOpenTripMap(config.openTripMapKey) : null);
   const places = overpass === undefined ? createOverpass({ logger }) : overpass;
   const wiki = wikipedia === undefined ? createWikipedia({ logger }) : wikipedia;
+  const wx = weather === undefined ? createWeather({ logger }) : weather;
+  // Optional paid Google services: only active when their keys are configured.
+  const gPlaces = googlePlaces === undefined ? (config.googlePlacesKey ? createGooglePlaces(config.googlePlacesKey, { logger }) : null) : googlePlaces;
+  const gVision = vision === undefined ? (config.googleVisionKey ? createVision(config.googleVisionKey) : null) : vision;
 
   const audit = async (req, action, detail = null, userId = req.user?.id ?? null) => {
     if (!database) return;
@@ -122,7 +130,7 @@ function createApp(config, { db, openTripMap, overpass, wikipedia } = {}) {
         return cb(null, false); // no CORS headers → browser blocks the response
       },
       credentials: true,
-      methods: ['GET', 'POST', 'PATCH', 'DELETE'],
+      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
       allowedHeaders: ['Content-Type', 'X-CSRF-Token'],
       maxAge: 600,
     })
@@ -139,7 +147,10 @@ function createApp(config, { db, openTripMap, overpass, wikipedia } = {}) {
   const planLimiter = rateLimit({ ...limiterOpts, windowMs: 60 * 1000, limit: 40 });
 
   // ---------- Parsing (strict size limits) ----------
-  app.use('/api', express.json({ limit: '10kb', strict: true }));
+  // Small JSON bodies everywhere; saved trips may carry a customised itinerary (still capped).
+  const jsonSmall = express.json({ limit: '10kb', strict: true });
+  const jsonTrips = express.json({ limit: '48kb', strict: true });
+  app.use('/api', (req, res, next) => (req.path.startsWith('/trips') ? jsonTrips : jsonSmall)(req, res, next));
   app.use(cookieParser());
 
   // ---------- API ----------
@@ -150,7 +161,10 @@ function createApp(config, { db, openTripMap, overpass, wikipedia } = {}) {
   app.use('/api', loadSession(sessions), requireJson, csrfProtection);
   app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
   app.use('/api/auth', authRouter({ db: database, sessions, config, audit, authLimiter }));
-  app.use('/api', planRouter({ openTripMap: otm, overpass: places, wikipedia: wiki, logger, planLimiter }));
+  app.use('/api', planRouter({ openTripMap: otm, overpass: places, wikipedia: wiki, googlePlaces: gPlaces, weather: wx, logger, planLimiter }));
+  // Photo recognition calls a paid API: keep it to a handful per IP per hour.
+  const photoLimiter = rateLimit({ ...limiterOpts, windowMs: 60 * 60 * 1000, limit: 10 });
+  app.use('/api', photoRouter({ wikipedia: wiki, vision: gVision, logger, photoLimiter, planLimiter }));
   app.use('/api/trips', tripsRouter({ db: database, audit }));
   app.use('/api/admin', adminRouter({ db: database, sessions, audit }));
   app.use('/api', notFound);

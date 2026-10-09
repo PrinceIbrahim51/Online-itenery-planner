@@ -127,6 +127,7 @@ const RENAMES = {
   Kallakkurichchi: 'Kallakurichi',
   'Dehra Dun': 'Dehradun',
   Nasik: 'Nashik',
+  Thenkasi: 'Tenkasi',
 };
 
 // Old / popular names people still search for.
